@@ -215,6 +215,7 @@ def watch(
     companion_titles: tuple[str, ...] = DEFAULT_COMPANION_TITLES,
     companion_classes: tuple[str, ...] = DEFAULT_COMPANION_CLASSES,
     revert_grace_seconds: float = 0.6,
+    stop_event=None,
     verbose: bool = True,
 ) -> None:
     """Apply gamma whenever the game - or one of our own windows - has focus.
@@ -233,7 +234,7 @@ def watch(
     companion_titles = tuple(companion_titles)
     companion_classes = tuple(companion_classes)
     controller = GammaController(gamma, brightness, contrast, displays)
-    install_signal_handlers(controller)
+    install_signal_handlers(controller)  # no-op off the main thread
     last_game_display: str | None = None
     pending_revert_since: float | None = None
 
@@ -260,7 +261,7 @@ def watch(
         print("Ctrl-C to stop. Gamma is restored automatically on exit.")
 
     try:
-        while True:
+        while not (stop_event is not None and stop_event.is_set()):
             hwnd = foreground_window()
             focused = (exe_name_for_window(hwnd) or "").lower()
             is_game = focused in targets
@@ -306,6 +307,9 @@ def watch(
                     if verbose:
                         print("[-] focus lost -> gamma restored")
 
-            time.sleep(poll_seconds)
+            if stop_event is not None:
+                stop_event.wait(poll_seconds)
+            else:
+                time.sleep(poll_seconds)
     finally:
         controller.restore()

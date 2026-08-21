@@ -1,15 +1,20 @@
 """Command line entry point for tarkov-tools.
 
-    python -m tarkov_tools.cli gamma watch      apply gamma while Tarkov has focus
-    python -m tarkov_tools.cli gamma set 1.5    set it now
-    python -m tarkov_tools.cli gamma reset      back to 1.0
-    python -m tarkov_tools.cli gamma displays   list monitors and current gamma
+  uv run tarkov-tools                  gamma watcher + search popover together
+  uv run tarkov-tools start 1.6        same, with an explicit gamma value
 
-    python -m tarkov_tools.cli sync             build/refresh from the tarkov.dev API
-    python -m tarkov_tools.cli import-templates --download   build from raw game templates
-    python -m tarkov_tools.cli search m995      look something up in the terminal
-    python -m tarkov_tools.cli ammo             penetration chart by caliber
-    python -m tarkov_tools.cli popover          hotkey-summoned search window
+  uv run tarkov-tools gamma watch      gamma only, while Tarkov has focus
+  uv run tarkov-tools gamma set 1.5    set it now
+  uv run tarkov-tools gamma reset      back to 1.0
+  uv run tarkov-tools gamma displays   list monitors and current gamma
+
+  uv run tarkov-tools import-templates --download   build the db from game files
+  uv run tarkov-tools sync             build/refresh from the tarkov.dev API
+  uv run tarkov-tools search m995      look something up in the terminal
+  uv run tarkov-tools ammo             penetration chart by caliber
+  uv run tarkov-tools popover          search popover only
+
+'tt' is a shorter alias for 'tarkov-tools'.
 """
 
 from __future__ import annotations
@@ -222,6 +227,51 @@ def _cmd_popover(args: argparse.Namespace) -> int:
     return popover_main(args.hotkey)
 
 
+def _cmd_start(args: argparse.Namespace) -> int:
+    """Run the gamma watcher and the search popover together.
+
+    One process, not two windows: tkinter must own the main thread, so the
+    gamma watcher runs alongside it on a worker. Ctrl-C (or closing the
+    popover) stops both, and gamma is restored on the way out.
+    """
+    import threading
+
+    from . import gamma as gm
+    from .popover import main as popover_main
+
+    cfg = load_config()["gamma"]
+    value = args.value if args.value is not None else cfg["value"]
+    stop = threading.Event()
+
+    def run_gamma() -> None:
+        try:
+            gm.watch(
+                gamma=value,
+                brightness=cfg["brightness"],
+                contrast=cfg["contrast"],
+                exes=tuple(cfg["exes"]),
+                poll_seconds=cfg["poll_seconds"],
+                game_monitor_only=cfg["game_monitor_only"] and not args.all_displays,
+                companion_titles=tuple(cfg.get("companion_titles") or ()),
+                companion_classes=tuple(cfg.get("companion_classes") or ()),
+                revert_grace_seconds=cfg.get("revert_grace_seconds", 0.6),
+                stop_event=stop,
+                verbose=not args.quiet_gamma,
+            )
+        except Exception as exc:
+            print(f"gamma watcher stopped: {exc}", file=sys.stderr)
+
+    worker = threading.Thread(target=run_gamma, name="gamma", daemon=True)
+    worker.start()
+
+    try:
+        return popover_main(args.hotkey)
+    finally:
+        stop.set()
+        worker.join(timeout=3)
+        print("gamma restored, both tools stopped")
+
+
 # --- parser ------------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
@@ -270,11 +320,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--hotkey", default=None, help="override the configured hotkey")
     p.set_defaults(func=_cmd_popover)
 
+    st = sub.add_parser(
+        "start", help="run the gamma watcher and the search popover together (default)"
+    )
+    st.add_argument("value", nargs="?", type=float, default=None, help="gamma value, e.g. 1.5")
+    st.add_argument("--hotkey", default=None, help="override the configured hotkey")
+    st.add_argument("--all-displays", action="store_true", help="gamma on every monitor")
+    st.add_argument("--quiet-gamma", action="store_true", help="suppress gamma focus logging")
+    st.set_defaults(func=_cmd_start)
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     write_default_config()
+    if argv is None:
+        argv = sys.argv[1:]
+    # Bare `tarkov-tools` starts everything, which is the common case.
+    if not argv:
+        argv = ["start"]
     args = build_parser().parse_args(argv)
     try:
         return args.func(args)

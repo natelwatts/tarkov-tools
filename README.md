@@ -4,7 +4,7 @@ Local helpers for Escape from Tarkov: automatic display gamma, and a
 hotkey-summoned search popover that answers *"what ammo, magazines and guns
 actually go together"* without alt-tabbing to the wiki.
 
-**Pure Python standard library. No pip installs, no build step.**
+**Pure Python standard library - zero dependencies. Managed with [uv](https://docs.astral.sh/uv/).**
 
 ---
 
@@ -31,14 +31,42 @@ is not the same as "approved". Use your own judgement.
 
 ---
 
-## Setup
+## Quick start
 
-There are two independent ways to build the database. Neither needs an API key.
+```powershell
+git clone <this repo>
+cd tarkov-tools
+uv sync                                          # creates .venv, no dependencies to fetch
+uv run tarkov-tools import-templates --download  # build the item database
+uv run tarkov-tools                              # start everything
+```
+
+That last command runs **both tools in one process**: the gamma watcher and
+the search popover. Ctrl-C (or closing the window) stops both and restores
+your gamma. `scripts	arkov-tools.cmd` does the same by double-click.
+
+`tt` is a shorter alias for `tarkov-tools`.
+
+| Command | What it does |
+|---|---|
+| `uv run tarkov-tools` | gamma watcher + popover together (same as `start`) |
+| `uv run tarkov-tools start 1.6` | same, overriding the gamma value |
+| `uv run tarkov-tools gamma watch` | gamma only |
+| `uv run tarkov-tools popover` | popover only |
+| `uv run tarkov-tools search m995` | one-off lookup in the terminal |
+| `uv run tarkov-tools ammo` | penetration chart |
+| `uv run tarkov-tools import-templates --download` | rebuild the database |
+
+---
+
+## Building the database
+
+There are two independent ways to build it. Neither needs an API key.
 
 ### Option A - raw game templates (recommended, no API)
 
 ```powershell
-python -m tarkov_tools.cli import-templates --download
+uv run tarkov-tools import-templates --download
 ```
 
 Downloads a dump of the game's own item template database (~18 MB) plus the
@@ -51,7 +79,7 @@ It carries **no market prices** - those do not exist in the game files.
 ### Option B - the tarkov.dev API
 
 ```powershell
-python -m tarkov_tools.cli sync
+uv run tarkov-tools sync
 ```
 
 Same static data, plus flea prices and trader offers.
@@ -75,13 +103,13 @@ via `finally`, `atexit`, and `SIGINT`/`SIGTERM` handlers - so a crash cannot
 leave your desktop washed out.
 
 ```powershell
-python -m tarkov_tools.cli gamma watch      # the one you want running
-python -m tarkov_tools.cli gamma set 1.5    # apply right now
-python -m tarkov_tools.cli gamma reset      # back to neutral
-python -m tarkov_tools.cli gamma displays   # list monitors + current state
+uv run tarkov-tools gamma watch      # the one you want running
+uv run tarkov-tools gamma set 1.5    # apply right now
+uv run tarkov-tools gamma reset      # back to neutral
+uv run tarkov-tools gamma displays   # list monitors + current state
 ```
 
-Or double-click `scripts\gamma-watch.cmd`.
+Or run `uv run tarkov-tools` to start it alongside the popover.
 
 Focus-triggered rather than launch-triggered on purpose: alt-tabbing to
 Discord shouldn't leave your desktop blown out.
@@ -92,7 +120,7 @@ want something more extreme, run this once from an Administrator shell and
 sign out and back in:
 
 ```powershell
-python -m tarkov_tools.cli gamma --unlock-range
+uv run tarkov-tools gamma --unlock-range
 ```
 
 ---
@@ -100,17 +128,17 @@ python -m tarkov_tools.cli gamma --unlock-range
 ## Search
 
 ```powershell
-python -m tarkov_tools.cli search m995        # full detail
-python -m tarkov_tools.cli search stanag --list
-python -m tarkov_tools.cli ammo               # penetration chart, all calibers
-python -m tarkov_tools.cli ammo Caliber556x45NATO
-python -m tarkov_tools.cli ammo --list-calibers
+uv run tarkov-tools search m995        # full detail
+uv run tarkov-tools search stanag --list
+uv run tarkov-tools ammo               # penetration chart, all calibers
+uv run tarkov-tools ammo Caliber556x45NATO
+uv run tarkov-tools ammo --list-calibers
 ```
 
 ### The popover
 
 ```powershell
-python -m tarkov_tools.cli popover
+uv run tarkov-tools popover
 ```
 
 Press **Ctrl+K** (configurable) any time - including in game - and a search
@@ -184,7 +212,7 @@ the default mirror goes stale:
 Or import files you already have on disk:
 
 ```powershell
-python -m tarkov_tools.cli import-templates --items path\to\items.json --locale path\to\en.json
+uv run tarkov-tools import-templates --items path\to\items.json --locale path\to\en.json
 ```
 
 SPT (Single Player Tarkov) maintains the canonical dump, but at time of
@@ -203,8 +231,8 @@ the API returns, so the code can be exercised while tarkov.dev is down.
 Run a real `sync` to replace it with authoritative values.
 
 ```powershell
-python scripts\make_demo_data.py
-python -m tarkov_tools.cli sync --cache
+uv run python scripts\make_demo_data.py
+uv run tarkov-tools sync --cache
 ```
 
 ---
@@ -238,7 +266,7 @@ tarkov_tools/
   search.py    search + relationship queries
   hotkey.py    RegisterHotKey listener on its own message loop
   popover.py   tkinter search window
-  cli.py       entry point
+  cli.py       entry point ('start' runs gamma + popover in one process)
 ```
 
 ## Not built yet

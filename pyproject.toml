@@ -1,0 +1,23 @@
+[project]
+name = "tarkov-tools"
+version = "0.1.0"
+description = "Local helpers for Escape from Tarkov: focus-aware display gamma and a hotkey search popover"
+readme = "README.md"
+requires-python = ">=3.11"
+# Deliberately empty. Everything uses the standard library:
+#   ctypes  -> Win32 gamma, window/focus queries, global hotkeys
+#   sqlite3 -> local item database (with FTS5)
+#   urllib  -> tarkov.dev GraphQL / template downloads
+#   tkinter -> popover window
+dependencies = []
+
+[project.scripts]
+tarkov-tools = "tarkov_tools.cli:main"
+tt = "tarkov_tools.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tarkov_tools"]

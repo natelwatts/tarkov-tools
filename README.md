@@ -214,10 +214,14 @@ account never disturbs them.
 Results are tagged `GUN` / `AMO` / `MAG` / `EXT`, so extraction points share
 the one search bar with everything else.
 
-**Tab cycles a filter**, or jump straight to one with **Ctrl+0-9** - Ctrl+0 is
-always All. Shift+Tab steps back, and clicking a chip works too.
-**Ctrl+Shift+Left/Right** slides the active chip along the bar; the order is
-saved to `config.local.json` and the numbers follow it.
+**Tab cycles a filter**, or jump straight to one with **Ctrl+<key>**. Keys run
+`1 2 3 4 5 6 7 8 9 0` then `y u i o p`, the way browser tabs number themselves,
+and each chip shows its own key. Shift+Tab steps back, and clicking a chip
+works too.
+
+**Ctrl+Shift+Left/Right** slides the active chip along the bar. The order is
+saved to `config.local.json` and the keys follow the order, so whatever you
+put first is always Ctrl+1.
 
 ```
 All | Guns | Ammo | Mags | Parts | Gear | Meds | Keys | Barter

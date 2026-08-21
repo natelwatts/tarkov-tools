@@ -81,6 +81,16 @@ EXTRACT_FILTERS = (
 )
 
 
+# Ctrl+<key> jumps straight to a chip. Digits run 1-9 then 0 for the tenth,
+# the way browser tabs number themselves, and the home-row letters carry on
+# from there. Anything past the fifteenth chip is still reachable with Tab.
+FILTER_KEYS = "1234567890yuiop"
+
+
+def filter_key(index: int) -> str:
+    return FILTER_KEYS[index] if index < len(FILTER_KEYS) else ""
+
+
 def apply_saved_order(filters: list, order: list[str]) -> list:
     """Reorder chips to a saved label order.
 
@@ -330,9 +340,9 @@ class Popover:
         # Windows Tk - Shift-Tab is the portable spelling.)
         self.entry.bind("<Control-h>", lambda e: self._toggle_list("have"))
         self.entry.bind("<Control-d>", lambda e: self._toggle_list("watch"))
-        for digit in range(10):
-            self.entry.bind(f"<Control-Key-{digit}>",
-                            lambda e, n=digit: self._jump_filter(n))
+        for position, key in enumerate(FILTER_KEYS):
+            self.entry.bind(f"<Control-Key-{key}>",
+                            lambda e, n=position: self._jump_filter(n))
         self.entry.bind("<Control-Shift-Left>", lambda e: self._move_filter(-1))
         self.entry.bind("<Control-Shift-Right>", lambda e: self._move_filter(1))
         self.entry.bind("<F5>", self._sync)
@@ -348,8 +358,9 @@ class Popover:
         tk.Label(self.filter_bar, text="  Tab ", bg=BG_ALT, fg="#5a606c",
                  font=self.font_chip).pack(side="left")
         for index, (label, _kind, _side) in enumerate(self.filters):
-            # Only the first ten have a Ctrl+digit shortcut to advertise.
-            shown = f" {index} {label} " if index < 10 else f" {label} "
+            # Advertise the shortcut on the chip itself.
+            key = filter_key(index)
+            shown = f" {key} {label} " if key else f" {label} "
             widget = tk.Label(self.filter_bar, text=shown, bg=BG_ALT,
                               fg=FG_DIM, font=self.font_chip, padx=4)
             widget.pack(side="left")
@@ -383,7 +394,7 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  Tab / Ctrl+0-9 filter   Ctrl+Shift+←→ reorder   ↑↓ move   Enter parts / map   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
+            text="  Tab / Ctrl+1-0,y-p filter   Ctrl+Shift+←→ reorder   ↑↓ move   Enter parts / map   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
@@ -693,8 +704,9 @@ class Popover:
             widget.destroy()
         self.filter_labels = []
         for index, (label, _kind, _side) in enumerate(self.filters):
-            # Only the first ten have a Ctrl+digit shortcut to advertise.
-            shown = f" {index} {label} " if index < 10 else f" {label} "
+            # Advertise the shortcut on the chip itself.
+            key = filter_key(index)
+            shown = f" {key} {label} " if key else f" {label} "
             widget = tk.Label(self.filter_bar, text=shown, bg=BG_ALT,
                               fg=FG_DIM, font=self.font_chip, padx=4)
             widget.pack(side="left")
@@ -717,7 +729,7 @@ class Popover:
         return "break"
 
     def _jump_filter(self, number: int) -> str:
-        """Ctrl+0 is always All; Ctrl+1..9 pick the chips after it."""
+        """Jump to a chip by position; see FILTER_KEYS for the key order."""
         if number < len(self.filters):
             self._set_filter(number)
         return "break"
@@ -727,8 +739,10 @@ class Popover:
         target = self.filter_index + delta
         if not 0 <= target < len(self.filters):
             return "break"
+        # Lift and reinsert rather than swap: identical for a single step, and
+        # correct if this is ever called with a larger delta.
         order = [entry[0] for entry in self.filters]
-        order[self.filter_index], order[target] = order[target], order[self.filter_index]
+        order.insert(target, order.pop(self.filter_index))
         try:
             set_local_override("search", "filter_order", order)
         except Exception:

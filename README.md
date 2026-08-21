@@ -194,6 +194,8 @@ saving.
   magazine that fits sorted by capacity, and which traders sell it
 - Search a **round** → every gun that fires it and every magazine that holds it
 - Search a **magazine** → what it accepts and what accepts it
+- **Enter on a gun** → its attachment categories; arrow through them to see
+  every part that fits, sorted by ergonomics then recoil. Esc goes back.
 - Search an **extract** → side, chance, exfil timer, requirement and which
   spawns reach it. **Enter opens the interactive map on it.**
 

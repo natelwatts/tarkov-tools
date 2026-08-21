@@ -313,6 +313,52 @@ def import_templates(conn, templates: dict, locale: dict, verbose: bool = True) 
                     )
                     weapon_mag_edges += 1
 
+    # --- attachment stats and every slot edge
+    #
+    # Slots are recorded for any item that has them, not just weapons: a
+    # receiver carries its own scope and handguard slots, and a handguard
+    # carries foregrip and rail slots, so the tree only works if nested
+    # parents are stored too.
+    mod_rows = slot_rows = 0
+    for item_id, template in real_items.items():
+        props = template["_props"]
+
+        if "Ergonomics" in props or "Recoil" in props:
+            conn.execute(
+                """
+                INSERT INTO mods (item_id, ergonomics, recoil_modifier,
+                                  accuracy_modifier, loudness, velocity, weight)
+                VALUES (?,?,?,?,?,?,?)
+                ON CONFLICT(item_id) DO UPDATE SET
+                    ergonomics=excluded.ergonomics,
+                    recoil_modifier=excluded.recoil_modifier,
+                    accuracy_modifier=excluded.accuracy_modifier,
+                    loudness=excluded.loudness, velocity=excluded.velocity,
+                    weight=excluded.weight
+                """,
+                (item_id, props.get("Ergonomics"), props.get("Recoil"),
+                 props.get("Accuracy"), props.get("Loudness"),
+                 props.get("Velocity"), props.get("Weight")),
+            )
+            mod_rows += 1
+
+        for slot in props.get("Slots") or []:
+            slot_name = slot.get("_name")
+            if not slot_name:
+                continue
+            required = int(bool((slot.get("_required")) or
+                                (slot.get("_props") or {}).get("required")))
+            for allowed in _filters(slot):
+                conn.execute(
+                    "INSERT OR IGNORE INTO item_slots "
+                    "(parent_id, slot_name, item_id, required) VALUES (?,?,?,?)",
+                    (item_id, slot_name, allowed, required),
+                )
+                slot_rows += 1
+
+    if verbose:
+        print(f"  mods         {mod_rows}  (slot edges {slot_rows})")
+
     # Every other item is imported too - not for the compatibility graph, but
     # so quest and hideout requirements can resolve to a name. Without this
     # only guns, ammo and magazines exist, and most of what a task asks for

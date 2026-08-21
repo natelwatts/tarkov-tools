@@ -243,6 +243,103 @@ def search(conn: sqlite3.Connection, term: str, limit: int = 40,
     return results[:limit]
 
 
+# --- attachment slots ---------------------------------------------------
+
+# The game numbers repeated slots - mod_tactical, mod_tactical_001,
+# mod_tactical002 - but they are the same kind of attachment point, so they
+# are collapsed for display.
+_SLOT_SUFFIX = re.compile(r"[_]?\d+$")
+
+SLOT_LABELS = {
+    "mod_magazine": "Magazine", "mod_muzzle": "Muzzle", "mod_scope": "Scope",
+    "mod_stock": "Stock", "mod_handguard": "Handguard", "mod_barrel": "Barrel",
+    "mod_foregrip": "Foregrip", "mod_pistol_grip": "Pistol grip",
+    "mod_reciever": "Receiver", "mod_tactical": "Tactical", "mod_mount": "Mount",
+    "mod_sight_front": "Front sight", "mod_sight_rear": "Rear sight",
+    "mod_charge": "Charging handle", "mod_gas_block": "Gas block",
+    "mod_bipod": "Bipod", "mod_launcher": "Launcher", "mod_equipment": "Equipment",
+    "mod_flashlight": "Flashlight", "mod_trigger": "Trigger",
+    "mod_hammer": "Hammer", "mod_catch": "Magazine catch",
+    "patron_in_weapon": "Chambered round", "mod_stock_akms": "Stock (AKMS)",
+    "mod_stock_axis": "Stock (axis)", "mod_muzzle_000": "Muzzle",
+    "mod_muzzle_001": "Muzzle (secondary)",
+}
+
+
+def slot_group(slot_name: str) -> str:
+    base = _SLOT_SUFFIX.sub("", slot_name or "")
+    return base or slot_name
+
+
+def slot_label(slot_name: str) -> str:
+    group = slot_group(slot_name)
+    if group in SLOT_LABELS:
+        return SLOT_LABELS[group]
+    pretty = group.removeprefix("mod_").replace("_", " ").strip()
+    return pretty[:1].upper() + pretty[1:] if pretty else group
+
+
+def reachable_parts(conn: sqlite3.Connection, root_id: str,
+                    max_depth: int = 6) -> dict[str, set[str]]:
+    """{slot group: {part id}} for everything that can end up on a weapon.
+
+    Slots nest: an M4A1 has no muzzle slot of its own - the muzzle hangs off
+    the receiver's barrel - so only walking direct slots would wrongly report
+    that the gun takes no suppressor. The walk is depth-limited and tracks
+    visited parts, since rails and mounts can otherwise cycle.
+    """
+    groups: dict[str, set[str]] = {}
+    seen = {root_id}
+    frontier = [(root_id, 0)]
+    while frontier:
+        node, depth = frontier.pop()
+        if depth >= max_depth:
+            continue
+        for row in conn.execute(
+            "SELECT slot_name, item_id FROM item_slots WHERE parent_id = ?", (node,)
+        ):
+            groups.setdefault(slot_group(row["slot_name"]), set()).add(row["item_id"])
+            if row["item_id"] not in seen:
+                seen.add(row["item_id"])
+                frontier.append((row["item_id"], depth + 1))
+    return groups
+
+
+def weapon_slots(conn: sqlite3.Connection, weapon_id: str) -> list[dict]:
+    """Attachment categories for a weapon, most options first."""
+    groups = reachable_parts(conn, weapon_id)
+    out = [
+        {"slot": group, "label": slot_label(group), "count": len(ids)}
+        for group, ids in groups.items()
+        if group != "patron_in_weapon"  # that is ammo, already shown elsewhere
+    ]
+    out.sort(key=lambda entry: (-entry["count"], entry["label"]))
+    return out
+
+
+def parts_for_slot(conn: sqlite3.Connection, weapon_id: str, slot: str,
+                   limit: int = 60) -> list[dict]:
+    """Every part that fits one slot category, best ergonomics first."""
+    ids = reachable_parts(conn, weapon_id).get(slot) or set()
+    if not ids:
+        return []
+    placeholders = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"""
+        SELECT i.id, i.name, i.short_name, i.avg_24h_price,
+               m.ergonomics, m.recoil_modifier, m.accuracy_modifier,
+               m.loudness, m.weight
+        FROM items i LEFT JOIN mods m ON m.item_id = i.id
+        WHERE i.id IN ({placeholders})
+        ORDER BY COALESCE(m.ergonomics, -999) DESC,
+                 COALESCE(m.recoil_modifier, 0) ASC, i.name
+        LIMIT ?
+        """,
+        (*ids, limit),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # --- relationship queries ----------------------------------------------
 
 _AMMO_COLUMNS = """

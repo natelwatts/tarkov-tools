@@ -113,6 +113,31 @@ CREATE TABLE IF NOT EXISTS weapon_magazine (
 );
 CREATE INDEX IF NOT EXISTS idx_wm_mag ON weapon_magazine(magazine_id);
 
+-- Attachment stats. Any item that modifies a weapon carries these.
+CREATE TABLE IF NOT EXISTS mods (
+    item_id           TEXT PRIMARY KEY REFERENCES items(id) ON DELETE CASCADE,
+    ergonomics        REAL,
+    recoil_modifier   REAL,
+    accuracy_modifier REAL,
+    loudness          REAL,
+    velocity          REAL,
+    weight            REAL
+);
+
+-- Every weapon/slot/part edge, not just magazines. slot_name is the game's
+-- internal name (mod_muzzle, mod_scope, ...); parent_id is the item the slot
+-- belongs to, which is the weapon for top-level slots and a part for nested
+-- ones such as a receiver's scope rail.
+CREATE TABLE IF NOT EXISTS item_slots (
+    parent_id  TEXT NOT NULL,
+    slot_name  TEXT NOT NULL,
+    item_id    TEXT NOT NULL,
+    required   INTEGER,
+    PRIMARY KEY (parent_id, slot_name, item_id)
+);
+CREATE INDEX IF NOT EXISTS idx_slots_parent ON item_slots(parent_id, slot_name);
+CREATE INDEX IF NOT EXISTS idx_slots_item ON item_slots(item_id);
+
 CREATE TABLE IF NOT EXISTS trader_offers (
     item_id    TEXT NOT NULL,
     vendor     TEXT NOT NULL,
@@ -248,8 +273,9 @@ def rebuild_fts(conn: sqlite3.Connection) -> int:
 
 def counts(conn: sqlite3.Connection) -> dict[str, int]:
     tables = [
-        "items", "ammo", "weapons", "magazines",
-        "weapon_ammo", "magazine_ammo", "weapon_magazine", "trader_offers",
+        "items", "ammo", "weapons", "magazines", "mods",
+        "weapon_ammo", "magazine_ammo", "weapon_magazine", "item_slots",
+        "trader_offers",
     ]
     return {
         t: conn.execute(f"SELECT COUNT(*) AS c FROM {t}").fetchone()["c"]

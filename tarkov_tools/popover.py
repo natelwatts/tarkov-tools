@@ -169,6 +169,16 @@ def _price_col(row) -> str:
     return f" {_fmt_price(value):>9}" if isinstance(value, int) and value else ""
 
 
+def _signed(value) -> str:
+    """Modifier with an explicit sign, so +7 ergo reads differently from -7."""
+    if value in (None, ""):
+        return "-"
+    number = float(value)
+    if number == 0:
+        return "0"
+    return f"{number:+.0f}" if number == int(number) else f"{number:+.1f}"
+
+
 def _pen_colour(pen) -> str:
     if not isinstance(pen, (int, float)):
         return FG
@@ -192,6 +202,11 @@ class Popover:
         self.filters = build_filters(conn)
         self._syncing = False
         self._sync_lines: list[str] = []
+        # 'search' shows results; 'slots' shows one weapon's attachment
+        # categories, with the parts for the highlighted one in the detail.
+        self.view = 'search'
+        self.slot_weapon: dict | None = None
+        self.slot_entries: list[dict] = []
         self._build()
 
     # --- construction --------------------------------------------------
@@ -263,7 +278,8 @@ class Popover:
         self.entry.bind("<Down>", self._nav_down)
         self.entry.bind("<Up>", self._nav_up)
         self.entry.bind("<Return>", self._nav_enter)
-        self.entry.bind("<Escape>", lambda e: self.hide())
+        self.entry.bind("<Escape>", self._on_escape)
+        self.entry.bind("<BackSpace>", self._on_backspace)
         # Tab would otherwise move focus out of the entry, so both bindings
         # return "break". (ISO_Left_Tab is an X11 keysym and is not valid on
         # Windows Tk - Shift-Tab is the portable spelling.)
@@ -296,7 +312,7 @@ class Popover:
         )
         self.listbox.pack(side="left", fill="y", padx=(6, 0), pady=6)
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
-        self.listbox.bind("<Escape>", lambda e: self.hide())
+        self.listbox.bind("<Escape>", self._on_escape)
 
         self.detail = tk.Text(
             body, bg=BG, fg=FG, font=self.font_detail, relief="flat",
@@ -313,13 +329,13 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  type to search   Tab filter   ↑↓ move   Enter details / open map   F5 sync   Esc hide  ",
+            text="  type to search   Tab filter   ↑↓ move   Enter parts / map   F5 sync   Esc back  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
         self._make_draggable(hint)
 
-        self.root.bind("<Escape>", lambda e: self.hide())
+        self.root.bind("<Escape>", self._on_escape)
         self.root.bind("<F5>", self._sync)
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         self._set_filter(0)
@@ -450,6 +466,53 @@ class Popover:
 
     # --- filters -------------------------------------------------------
 
+    # --- slot browsing --------------------------------------------------
+
+    def _enter_slots(self, weapon: dict) -> None:
+        """Show a weapon's attachment categories in place of the results."""
+        slots = searchmod.weapon_slots(self.conn, weapon["id"])
+        if not slots:
+            return
+        self.view = "slots"
+        self.slot_weapon = weapon
+        self.slot_entries = slots
+        self.listbox.delete(0, "end")
+        for entry in slots:
+            self.listbox.insert("end", f"{entry['count']:>3}  {entry['label']}")
+        self.listbox.selection_clear(0, "end")
+        self.listbox.selection_set(0)
+        self._render_slot(0)
+
+    def _render_slot(self, index: int) -> None:
+        entry = self.slot_entries[index]
+        weapon = self.slot_weapon
+        parts = searchmod.parts_for_slot(self.conn, weapon["id"], entry["slot"])
+        name = (weapon.get("name") or "").replace("[DEMO] ", "")
+        out: list[tuple[str, str]] = [
+            (f"{name}\n", "head"),
+            (f"  {entry['label']} - {entry['count']} options\n\n", "dim"),
+            ("    ergo  recoil   loud  part\n", "dim"),
+        ]
+        for part in parts:
+            ergo = part.get("ergonomics")
+            recoil = part.get("recoil_modifier")
+            loud = part.get("loudness")
+            out.append((f"  {_signed(ergo):>6}", "good" if (ergo or 0) > 0 else "dim"))
+            out.append((f"  {_signed(recoil):>6}", "good" if (recoil or 0) < 0 else "dim"))
+            out.append((f"  {_signed(loud):>5}", "dim"))
+            out.append((f"  {(part['name'] or '')[:52]}\n", None))
+        if not parts:
+            out.append(("    no parts recorded\n", "dim"))
+        out.append(("\n  Esc or Backspace goes back to the results.\n", "dim"))
+        self._set_detail(out)
+
+    def _leave_slots(self) -> str:
+        self.view = "search"
+        self.slot_weapon = None
+        self.slot_entries = []
+        self._on_type()
+        return "break"
+
     # --- syncing -------------------------------------------------------
 
     def _sync(self, event=None) -> str:
@@ -557,6 +620,11 @@ class Popover:
         if event is not None and event.keysym in ("Up", "Down", "Return", "Escape",
                                                   "Tab", "ISO_Left_Tab"):
             return
+        if self.view == "slots":
+            # Typing means the user wants to search again.
+            self.view = "search"
+            self.slot_weapon = None
+            self.slot_entries = []
         term = self.entry.get().strip()
         _label, kind, side = self.filters[self.filter_index]
         # An active filter with an empty box lists that whole category, so the
@@ -587,16 +655,34 @@ class Popover:
             self._set_detail([("no matches\n", "dim")] if term else
                              [("type a gun, round or magazine name\n", "dim")])
 
+    def _on_escape(self, event=None) -> str:
+        """Escape backs out of the slot view first, and only then hides."""
+        if self.view == "slots":
+            return self._leave_slots()
+        self.hide()
+        return "break"
+
+    def _on_backspace(self, event=None):
+        # Only intercept backspace when it cannot be editing the search text,
+        # otherwise it would stop deleting characters.
+        if self.view == "slots" and not self.entry.get():
+            return self._leave_slots()
+        return None
+
     def _move(self, delta: int) -> None:
-        if not self.results:
+        rows = self.slot_entries if self.view == "slots" else self.results
+        if not rows:
             return
         current = self.listbox.curselection()
         index = (current[0] if current else 0) + delta
-        index = max(0, min(len(self.results) - 1, index))
+        index = max(0, min(len(rows) - 1, index))
         self.listbox.selection_clear(0, "end")
         self.listbox.selection_set(index)
         self.listbox.see(index)
-        self._render(self.results[index]["id"])
+        if self.view == "slots":
+            self._render_slot(index)
+        else:
+            self._render(rows[index]["id"])
 
     def _nav_down(self, event=None):
         self._move(1)
@@ -638,13 +724,20 @@ class Popover:
             chosen = self.results[current[0] if current else 0]
             if chosen.get("kind") == "extract":
                 self._open_extract(chosen["id"])
+            elif chosen.get("kind") == "weapon":
+                self._enter_slots(chosen)
             else:
                 self._render(chosen["id"])
         return "break"
 
     def _on_select(self, event=None) -> None:
         current = self.listbox.curselection()
-        if current and self.results:
+        if not current:
+            return
+        if self.view == "slots":
+            if current[0] < len(self.slot_entries):
+                self._render_slot(current[0])
+        elif self.results:
             self._render(self.results[current[0]]["id"])
 
     # --- rendering -----------------------------------------------------

@@ -64,6 +64,9 @@ DEFAULTS: dict[str, Any] = {
         "max_results": 40,
         # [x, y] of the popover, updated when you drag it. null = centred.
         "position": None,
+        # Filter chip order, by label. Empty means the built-in order.
+        # Ctrl+Shift+Left/Right in the popover rewrites this.
+        "filter_order": [],
     },
 }
 

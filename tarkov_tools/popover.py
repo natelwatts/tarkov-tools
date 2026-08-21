@@ -81,6 +81,21 @@ EXTRACT_FILTERS = (
 )
 
 
+def apply_saved_order(filters: list, order: list[str]) -> list:
+    """Reorder chips to a saved label order.
+
+    Labels the saved order does not mention keep their relative position at
+    the end, so a filter added in a later version still shows up rather than
+    silently vanishing because an old config never listed it.
+    """
+    if not order:
+        return filters
+    by_label = {entry[0]: entry for entry in filters}
+    ordered = [by_label.pop(label) for label in order if label in by_label]
+    ordered.extend(entry for entry in filters if entry[0] in by_label)
+    return ordered
+
+
 def build_filters(conn) -> tuple:
     """The filter set this database can actually serve."""
     filters = list(BASE_FILTERS)
@@ -97,7 +112,8 @@ def build_filters(conn) -> tuple:
         has_extracts = False
     if has_extracts:
         filters.extend(EXTRACT_FILTERS)
-    return tuple(filters)
+    order = (load_config().get("search") or {}).get("filter_order") or []
+    return tuple(apply_saved_order(filters, order))
 
 # Penetration bands used for the colour cue, matching how players talk about
 # armour class: roughly "handles class N".
@@ -314,6 +330,11 @@ class Popover:
         # Windows Tk - Shift-Tab is the portable spelling.)
         self.entry.bind("<Control-h>", lambda e: self._toggle_list("have"))
         self.entry.bind("<Control-d>", lambda e: self._toggle_list("watch"))
+        for digit in range(10):
+            self.entry.bind(f"<Control-Key-{digit}>",
+                            lambda e, n=digit: self._jump_filter(n))
+        self.entry.bind("<Control-Shift-Left>", lambda e: self._move_filter(-1))
+        self.entry.bind("<Control-Shift-Right>", lambda e: self._move_filter(1))
         self.entry.bind("<F5>", self._sync)
         self.entry.bind("<Control-r>", self._sync)
         self.entry.bind("<Tab>", self._next_filter)
@@ -327,7 +348,9 @@ class Popover:
         tk.Label(self.filter_bar, text="  Tab ", bg=BG_ALT, fg="#5a606c",
                  font=self.font_chip).pack(side="left")
         for index, (label, _kind, _side) in enumerate(self.filters):
-            widget = tk.Label(self.filter_bar, text=f" {label} ", bg=BG_ALT,
+            # Only the first ten have a Ctrl+digit shortcut to advertise.
+            shown = f" {index} {label} " if index < 10 else f" {label} "
+            widget = tk.Label(self.filter_bar, text=shown, bg=BG_ALT,
                               fg=FG_DIM, font=self.font_chip, padx=4)
             widget.pack(side="left")
             widget.bind("<Button-1>", lambda e, i=index: self._set_filter(i))
@@ -360,7 +383,7 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  Tab filter   ↑↓ move   Enter parts / map   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
+            text="  Tab / Ctrl+0-9 filter   Ctrl+Shift+←→ reorder   ↑↓ move   Enter parts / map   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
@@ -670,7 +693,9 @@ class Popover:
             widget.destroy()
         self.filter_labels = []
         for index, (label, _kind, _side) in enumerate(self.filters):
-            widget = tk.Label(self.filter_bar, text=f" {label} ", bg=BG_ALT,
+            # Only the first ten have a Ctrl+digit shortcut to advertise.
+            shown = f" {index} {label} " if index < 10 else f" {label} "
+            widget = tk.Label(self.filter_bar, text=shown, bg=BG_ALT,
                               fg=FG_DIM, font=self.font_chip, padx=4)
             widget.pack(side="left")
             widget.bind("<Button-1>", lambda e, i=index: self._set_filter(i))
@@ -689,6 +714,28 @@ class Popover:
         self.filter_index = index % len(self.filters)
         self._highlight_filters()
         self._on_type()
+        return "break"
+
+    def _jump_filter(self, number: int) -> str:
+        """Ctrl+0 is always All; Ctrl+1..9 pick the chips after it."""
+        if number < len(self.filters):
+            self._set_filter(number)
+        return "break"
+
+    def _move_filter(self, delta: int) -> str:
+        """Slide the active chip along the bar and remember the new order."""
+        target = self.filter_index + delta
+        if not 0 <= target < len(self.filters):
+            return "break"
+        order = [entry[0] for entry in self.filters]
+        order[self.filter_index], order[target] = order[target], order[self.filter_index]
+        try:
+            set_local_override("search", "filter_order", order)
+        except Exception:
+            pass  # reordering is a convenience; never let it break the UI
+        self.filters = tuple(apply_saved_order(list(self.filters), order))
+        self.filter_index = target
+        self._rebuild_filter_bar()
         return "break"
 
     def _next_filter(self, event=None) -> str:

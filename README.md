@@ -145,10 +145,10 @@ uv run tarkov-tools popover
 Press **Ctrl+T** (configurable) any time - including in game - and a search
 box appears. Type, arrow through results, Esc to dismiss.
 
-**Moving it.** The window has no title bar, so dragging is implemented on the
-chrome: grab the grip next to "search", the empty part of the search row, or
-the hint bar along the bottom (the cursor changes to a move cursor there).
-Double-click any of those to snap it back to the centre.
+**Moving it.** The window has no system title bar, so there is a title strip
+across the top that stands in for one: **anywhere along that strip drags the
+window**. The search row and the bottom hint bar work too. Double-click any
+of them to snap back to the centre.
 
 The position is remembered in `config.local.json` and restored next time. It
 is clamped to the virtual desktop on both drag and load, so it cannot be lost

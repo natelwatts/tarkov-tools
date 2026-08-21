@@ -34,6 +34,10 @@ FG = "#d7dae0"
 FG_DIM = "#7c8391"
 ACCENT = "#c8a45c"
 SEL = "#2a3038"
+TITLE_BG = "#0f1114"
+
+# Column labels for magazine tables, so each row need not repeat them.
+MAG_HEADER = "     cap   ergo  name"
 
 # Penetration bands used for the colour cue, matching how players talk about
 # armour class: roughly "handles class N".
@@ -120,6 +124,16 @@ def _fmt_price(value) -> str:
     return f"{value:,}" if isinstance(value, int) and value else "-"
 
 
+def _price_col(row) -> str:
+    """Trailing price column, omitted entirely when there is no price.
+
+    A template-only database has no market data, so reserving the column
+    would just push item names out of view for a row of dashes.
+    """
+    value = row.get("avg_24h_price")
+    return f" {_fmt_price(value):>9}" if isinstance(value, int) and value else ""
+
+
 def _pen_colour(pen) -> str:
     if not isinstance(pen, (int, float)):
         return FG
@@ -171,17 +185,35 @@ class Popover:
         inner = tk.Frame(outer, bg=BG)
         inner.pack(fill="both", expand=True)
 
+        # The window is overrideredirect, so it has no system title bar. This
+        # strip stands in for one: it spans the full width and every pixel of
+        # it drags, including the label, so the whole top edge is grabbable.
+        self.titlebar = tk.Frame(inner, bg=TITLE_BG, height=26)
+        self.titlebar.pack(fill="x", side="top")
+        self.titlebar.pack_propagate(False)
+        self.handle = tk.Label(
+            self.titlebar,
+            text="  ≡  " + WINDOW_TITLE,
+            bg=TITLE_BG, fg=FG_DIM, font=(mono, 9), anchor="w",
+        )
+        self.handle.pack(side="left", fill="both", expand=True)
+        self.drag_hint = tk.Label(
+            self.titlebar,
+            text="drag to move  ·  double-click to centre  ",
+            bg=TITLE_BG, fg="#5a606c", font=(mono, 8), anchor="e",
+        )
+        self.drag_hint.pack(side="right", fill="y")
+        # Bind every child too: a Frame only receives events on its own
+        # exposed pixels, not those covered by a child widget.
+        for widget in (self.titlebar, self.handle, self.drag_hint):
+            self._make_draggable(widget)
+
         # search row
         row = tk.Frame(inner, bg=BG_ALT)
         row.pack(fill="x", padx=0, pady=0)
-        self.handle = tk.Label(
-            row, text="  ≡  search ", bg=BG_ALT, fg=ACCENT, font=self.font_entry
-        )
-        self.handle.pack(side="left")
-        # No title bar (overrideredirect), so dragging is implemented by hand
-        # on the chrome: the grip, the empty part of the search row, and the
-        # hint bar. The entry and result panes stay normal for text selection.
-        self._make_draggable(self.handle)
+        tk.Label(
+            row, text="  search ", bg=BG_ALT, fg=ACCENT, font=self.font_entry
+        ).pack(side="left")
         self._make_draggable(row)
         self.entry = tk.Entry(
             row, bg=BG_ALT, fg=FG, insertbackground=ACCENT, font=self.font_entry,
@@ -200,7 +232,7 @@ class Popover:
         self.listbox = tk.Listbox(
             body, bg=BG, fg=FG, font=self.font_list, relief="flat",
             highlightthickness=0, selectbackground=SEL, selectforeground=ACCENT,
-            activestyle="none", width=38,
+            activestyle="none", width=40,
         )
         self.listbox.pack(side="left", fill="y", padx=(6, 0), pady=6)
         self.listbox.bind("<<ListboxSelect>>", self._on_select)
@@ -221,7 +253,7 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  type to search   ↑↓ move   Enter details   Esc hide   ≡ drag to move, double-click to centre  ",
+            text="  type to search   ↑↓ move   Enter details   Esc hide  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
@@ -356,7 +388,7 @@ class Popover:
         for r in self.results:
             tag = {"weapon": "GUN", "ammo": "AMO", "magazine": "MAG"}.get(r["kind"], "   ")
             name = (r["name"] or "").replace("[DEMO] ", "")
-            self.listbox.insert("end", f"{tag}  {name[:32]}")
+            self.listbox.insert("end", f"{tag}  {name[:34]}")
         if self.results:
             self.listbox.selection_clear(0, "end")
             self.listbox.selection_set(0)
@@ -433,7 +465,7 @@ class Popover:
             out.append((f"{frag * 100:.0f}%\n" if isinstance(frag, float) else "-\n", None))
             out.append((f"  {stats.get('caliber') or ''}   {stats.get('initial_speed') or '-'} m/s\n\n", "dim"))
             out += self._table("FIRED BY", data.get("weapons"), self._gun_row)
-            out += self._table("FITS MAGAZINES", data.get("magazines"), self._mag_row)
+            out += self._table("FITS MAGAZINES", data.get("magazines"), self._mag_row, MAG_HEADER)
 
         elif kind == "weapon":
             out.append((f"  {stats.get('caliber') or ''}\n", "dim"))
@@ -444,7 +476,7 @@ class Popover:
             out.append(("   rpm ", "label"))
             out.append((f"{stats.get('fire_rate')}\n\n", None))
             out += self._table("AMMO (best penetration first)", data.get("ammo"), self._ammo_row)
-            out += self._table("MAGAZINES", data.get("magazines"), self._mag_row)
+            out += self._table("MAGAZINES", data.get("magazines"), self._mag_row, MAG_HEADER)
 
         elif kind == "magazine":
             out.append(("  capacity ", "label"))
@@ -471,10 +503,12 @@ class Popover:
                 return threshold
         return 999
 
-    def _table(self, title, rows, row_fn) -> list[tuple[str, str]]:
+    def _table(self, title, rows, row_fn, header: str | None = None) -> list[tuple[str, str]]:
         if not rows:
             return []
         out = [(f"  {title}\n", "head")]
+        if header:
+            out.append((f"{header}\n", "dim"))
         for r in rows:
             out += row_fn(r)
         out.append(("\n", None))
@@ -486,17 +520,17 @@ class Popover:
         return [
             ("    pen ", "dim"),
             (f"{pen:>3}", f"pen{self._band(pen)}"),
-            (f"  dmg {r.get('damage'):>3}  {name[:34]:<34} {_fmt_price(r.get('avg_24h_price')):>9}\n", None),
+            (f"  dmg {r.get('damage'):>3}  {name[:44]:<44}{_price_col(r)}\n", None),
         ]
 
     def _mag_row(self, r) -> list[tuple[str, str]]:
         name = (r["name"] or "").replace("[DEMO] ", "")
-        return [(f"    {r.get('capacity'):>3} rnd  ergo {str(r.get('ergonomics')):>6}  "
-                 f"{name[:32]:<32} {_fmt_price(r.get('avg_24h_price')):>9}\n", None)]
+        return [(f"    {r.get('capacity'):>4} {str(r.get('ergonomics')):>6}  "
+                 f"{name[:58]:<58}{_price_col(r)}\n", None)]
 
     def _gun_row(self, r) -> list[tuple[str, str]]:
         name = (r["name"] or "").replace("[DEMO] ", "")
-        return [(f"    {name[:36]:<36} ergo {str(r.get('ergonomics')):>5}  "
+        return [(f"    {name[:50]:<50} ergo {str(r.get('ergonomics')):>5}  "
                  f"rec {r.get('recoil_vertical')}\n", None)]
 
     def run(self) -> None:

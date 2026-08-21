@@ -203,7 +203,7 @@ the one search bar with everything else.
 **Tab cycles a filter** (Shift+Tab goes back, or click a chip):
 
 ```
-All | Guns | Ammo | Mags | Extracts | Exfil PMC | Exfil Scav | Exfil Co-op
+All | Guns | Ammo | Mags | Needed | Extracts | Exfil PMC | Exfil Scav | Exfil Co-op
 ```
 
 With the box empty, a filter lists that whole category - Tab to `Ammo` for the
@@ -212,6 +212,50 @@ sensibly per category: ammo by caliber then penetration, mags by capacity.
 
 > Requires Tarkov in **borderless windowed** mode. Exclusive fullscreen will
 > not composite another window on top.
+
+---
+
+## Quest and hideout needs (optional)
+
+Connect a [TarkovTracker](https://tarkovtracker.org/) account and every item
+shows what still wants it:
+
+```
+Bundle of wires
+  STILL NEEDED
+     10x FIR  Fertilizers
+     15x      Generator level 2
+     10x      Heating level 3
+```
+
+```powershell
+uv run tarkov-tools tracker login --token PVP_xxxxx   # or $env:TARKOVTRACKER_TOKEN
+uv run tarkov-tools tracker sync                      # after playing
+uv run tarkov-tools tracker needed                    # the shopping list
+```
+
+Tab to the **Needed** filter for everything outstanding, largest shortfall
+first, with anything gated behind an unmet prerequisite marked `(locked)`.
+
+**How it works.** The progress API returns only ids and completion flags - no
+item names and no quantities remaining - so what you still need is computed by
+joining your progress against TarkovTracker's task and hideout definitions,
+which they serve publicly with no authentication. Those same public feeds are
+a live substitute for the parts of tarkov.dev that are down.
+
+Notes:
+
+- **Read-only.** Only the `GP` permission is used; nothing writes to your
+  account even if your token also carries `WP`.
+- The token lives in `config.local.json`, which is gitignored, and is only
+  ever displayed masked. `tracker logout` clears it.
+- The prefix fixes the game mode: a `PVE_` token reads only PVE progress. A
+  mismatch is a 401, which `tracker login` reports immediately.
+- Currency is excluded - "you need 18,222,000 Roubles" is not a shopping list.
+- Objectives that accept any of a wide list ("any of 56 medicine items") are
+  kept off the shopping list but still shown on the item itself.
+- Free tier allows 1,000 reads/day, so sync after a session rather than
+  continuously.
 
 ---
 

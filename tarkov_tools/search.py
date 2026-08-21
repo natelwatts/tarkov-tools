@@ -48,6 +48,32 @@ def browse(conn: sqlite3.Connection, kind: str, side: str | None = None,
     Lets a filter double as a browsable list: pick "Ammo" and see the whole
     chart, pick "Scav extracts" and see all of them.
     """
+    if kind == "needed":
+        # Outstanding requirements, biggest shortfall first. Wide "any of N"
+        # objectives are excluded: those are a category, not a shopping item.
+        rows = conn.execute(
+            """
+            SELECT n.item_id AS id, i.name, i.short_name, i.avg_24h_price,
+                   SUM(n.need - n.have) AS outstanding,
+                   MAX(n.available) AS available
+            FROM needed_items n LEFT JOIN items i ON i.id = n.item_id
+            WHERE n.optional = 0 AND n.need > n.have AND n.alternatives <= 3
+            GROUP BY n.item_id
+            ORDER BY MAX(n.available) DESC, outstanding DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [
+            {"id": r["id"], "name": r["name"] or r["id"],
+             # Locked means a prerequisite task or level gate is not met yet,
+             # so it is needed eventually but not actionable now.
+             "short_name": (f"need {r['outstanding']}" if r["available"]
+                            else f"need {r['outstanding']} (locked)"),
+             "avg_24h_price": r["avg_24h_price"], "kind": "needed"}
+            for r in rows
+        ]
+
     if kind == "extract":
         clause = " WHERE side = ?" if side else ""
         params: tuple = (side, limit) if side else (limit,)
@@ -90,6 +116,12 @@ def search(conn: sqlite3.Connection, term: str, limit: int = 40,
         # Browsing a whole category should not be capped at a
         # result-list size meant for typed queries.
         return browse(conn, kind, side, max(limit, 300)) if kind else []
+
+    if kind == "needed":
+        # Narrow the shopping list by name rather than running a fresh search.
+        lowered_term = term.lower()
+        return [r for r in browse(conn, "needed", None, 400)
+                if lowered_term in (r["name"] or "").lower()][:limit]
 
     want_items = kind is None or kind in ITEM_KINDS
     want_extracts = kind is None or kind == "extract"
@@ -166,16 +198,22 @@ def search(conn: sqlite3.Connection, term: str, limit: int = 40,
 
     def rank(entry: dict) -> tuple:
         name = (entry.get("name") or "").lower()
-        if name == lowered:
+        exact = name != lowered  # False sorts first
+        if name.startswith(lowered):
             quality = 0
-        elif name.startswith(lowered):
-            quality = 1
         elif lowered in name:
-            quality = 2
+            quality = 1
         else:
-            quality = 3
-        kind_order = {"weapon": 0, "ammo": 1, "magazine": 2, "extract": 3, "item": 4}
-        return (quality, kind_order.get(entry["kind"], 9), len(entry.get("name") or ""))
+            quality = 2
+        kind_order = {"weapon": 0, "ammo": 1, "magazine": 2, "extract": 3,
+                      "needed": 4, "item": 5}
+        order = kind_order.get(entry["kind"], 9)
+        # Guns, ammo, magazines and extracts outrank plain items even on a
+        # weaker text match: searching "m4a1" wants the rifle, not the
+        # "M4A1 upper receiver" that merely happens to start with it. An exact
+        # name match still wins outright, whatever kind it is.
+        bucket = 1 if entry["kind"] == "item" else 0
+        return (exact, bucket, quality, order, len(entry.get("name") or ""))
 
     results.sort(key=rank)
     return results[:limit]
@@ -295,6 +333,14 @@ def describe(conn: sqlite3.Connection, item_id: str) -> dict[str, Any]:
         return {}
     kind = item_kind(conn, item_id)
     out: dict[str, Any] = {"kind": kind, "item": dict(base), "offers": offers_for(conn, item_id)}
+
+    # What still wants this item, if a TarkovTracker account is connected.
+    try:
+        from . import tracker as tracker_mod
+
+        out["needs"] = tracker_mod.needs_for_item(conn, item_id)
+    except Exception:
+        out["needs"] = []
 
     if kind == "ammo":
         stats = conn.execute("SELECT * FROM ammo WHERE item_id = ?", (item_id,)).fetchone()

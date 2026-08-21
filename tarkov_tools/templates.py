@@ -313,6 +313,26 @@ def import_templates(conn, templates: dict, locale: dict, verbose: bool = True) 
                     )
                     weapon_mag_edges += 1
 
+    # Every other item is imported too - not for the compatibility graph, but
+    # so quest and hideout requirements can resolve to a name. Without this
+    # only guns, ammo and magazines exist, and most of what a task asks for
+    # (meds, barter goods, keys) would be an unresolvable id.
+    covered = ammo_ids | mag_ids | weapon_ids
+    others = 0
+    for item_id, template in real_items.items():
+        if item_id in covered:
+            continue
+        props = template["_props"]
+        if not _display_name(item_id, props, locale):
+            continue  # unnamed internal template, not a real item
+        parent = template.get("_parent")
+        category = _display_name(parent, (templates.get(parent) or {}).get("_props") or {},
+                                 locale) or "item"
+        _upsert_item_static(conn, item_id, props, locale, ["item", category])
+        others += 1
+    if verbose:
+        print(f"  other items  {others}")
+
     # A weapon with no chamber filter (or a magazine-fed design that lists
     # nothing directly) still implies ammo through the magazines it takes.
     inferred = conn.execute(

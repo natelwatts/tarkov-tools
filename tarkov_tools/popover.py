@@ -46,6 +46,7 @@ FILTERS = (
     ("Guns", "weapon", None),
     ("Ammo", "ammo", None),
     ("Mags", "magazine", None),
+    ("Needed", "needed", None),
     ("Extracts", "extract", None),
     ("Exfil PMC", "extract", "Pmc"),
     ("Exfil Scav", "extract", "Scav"),
@@ -448,9 +449,11 @@ class Popover:
         self.listbox.delete(0, "end")
         for r in self.results:
             tag = {"weapon": "GUN", "ammo": "AMO", "magazine": "MAG",
-                   "extract": "EXT"}.get(r["kind"], "   ")
+                   "extract": "EXT", "needed": "NEED"}.get(r["kind"], "   ")
             name = (r["name"] or "").replace("[DEMO] ", "")
-            if r["kind"] == "extract" and r.get("short_name"):
+            if r["kind"] == "needed" and r.get("short_name"):
+                name = f"{name} · {r['short_name']}"
+            elif r["kind"] == "extract" and r.get("short_name"):
                 # Two extracts can share a name (a PMC and a Scav one), so the
                 # map is shown here and the side in the detail pane.
                 name = f"{name} · {r['short_name']}"
@@ -539,6 +542,28 @@ class Popover:
             return
         self._set_detail(self._format(data))
 
+    def _format_needs(self, needs: list[dict]) -> list[tuple[str, str]]:
+        """What still wants this item, tasks before hideout, unlocked first."""
+        if not needs:
+            return []
+        out: list[tuple[str, str]] = [("  STILL NEEDED\n", "head")]
+        for entry in needs[:10]:
+            outstanding = (entry.get("need") or 0) - (entry.get("have") or 0)
+            fir = " FIR" if entry.get("found_in_raid") else "    "
+            # A wide "any of N" objective means this item is one option among
+            # many, not something specifically required.
+            alternatives = entry.get("alternatives") or 1
+            alt = f"  (1 of {alternatives} accepted)" if alternatives > 1 else ""
+            locked = "" if entry.get("available") else "  [locked]"
+            tag = "good" if entry.get("available") else "dim"
+            out.append((f"    {outstanding:>3}x", "warn"))
+            out.append((f"{fir}  ", "warn" if entry.get("found_in_raid") else "dim"))
+            out.append((f"{entry.get('source_name')}{alt}{locked}\n", tag))
+        if len(needs) > 10:
+            out.append((f"    ... and {len(needs) - 10} more\n", "dim"))
+        out.append(("\n", None))
+        return out
+
     def _format_extract(self, extract: dict) -> list[tuple[str, str]]:
         side = (extract.get("side") or "").replace("Pmc", "PMC").replace("Coop", "Co-op")
         out: list[tuple[str, str]] = [
@@ -580,6 +605,9 @@ class Popover:
         out.append((f"{item['name']}\n", "head"))
         price = item.get("avg_24h_price")
         out.append((f"  flea avg {_fmt_price(price)} RUB\n\n", "dim"))
+        # Quest and hideout demand goes above the stats: when an item is in
+        # your hands, "do I still need this?" is the first question.
+        out += self._format_needs(data.get("needs") or [])
 
         if kind == "ammo":
             out.append(("  pen ", "label"))

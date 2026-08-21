@@ -14,6 +14,7 @@
   uv run tarkov-tools ammo             penetration chart by caliber
   uv run tarkov-tools popover          search popover only
   uv run tarkov-tools extract zb-1011  open the wiki map, extract highlighted
+  uv run tarkov-tools tracker login    connect your TarkovTracker account
   uv run tarkov-tools hotkey ctrl+t    rebind the popover hotkey
 
 'tt' is a shorter alias for 'tarkov-tools'.
@@ -22,6 +23,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
 from .config import load_config, write_default_config
@@ -303,6 +305,105 @@ def _cmd_extract(args: argparse.Namespace) -> int:
     return 0 if opened else 1
 
 
+def _cmd_tracker(args: argparse.Namespace) -> int:
+    """Connect a TarkovTracker account and check the connection."""
+    from . import tracker as tt
+
+    if args.action == "login":
+        # Prefer stdin or the environment so the token does not end up in
+        # shell history or a process listing.
+        token = (args.token or os.environ.get("TARKOVTRACKER_TOKEN") or "").strip()
+        if not token and not sys.stdin.isatty():
+            token = sys.stdin.read().strip()
+        if not token:
+            print(
+                "No token given. Any of these work:\n"
+                "  uv run tarkov-tools tracker login --token PVP_xxxxx\n"
+                '  $env:TARKOVTRACKER_TOKEN="PVP_xxxxx"; uv run tarkov-tools tracker login\n'
+                '  "PVP_xxxxx" | uv run tarkov-tools tracker login',
+                file=sys.stderr,
+            )
+            return 1
+        if not token.startswith(tt.TOKEN_PREFIXES):
+            print(f"warning: token does not start with one of "
+                  f"{', '.join(tt.TOKEN_PREFIXES)} - legacy tt_ tokens no longer work.")
+        try:
+            print("verifying with TarkovTracker ...")
+            summary = tt.describe_token(token)
+        except tt.TrackerError as exc:
+            print(f"\n{exc}", file=sys.stderr)
+            return 1
+        tt.save_token(token)
+        print(f"\n{summary}")
+        print(f"\nsaved to {tt.config_path_hint()}  (gitignored)")
+        return 0
+
+    token = tt.load_token()
+    if not token:
+        print("No TarkovTracker token saved yet.")
+        print("  uv run tarkov-tools tracker login --token PVP_xxxxx")
+        return 1
+
+    if args.action == "status":
+        try:
+            print(tt.describe_token(token))
+        except tt.TrackerError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        return 0
+
+    if args.action == "logout":
+        tt.save_token("")
+        print(f"token cleared from {tt.config_path_hint()}")
+        return 0
+
+    if args.action == "sync":
+        from . import db as dbmod
+
+        conn = dbmod.connect()
+        try:
+            with conn:
+                tt.sync_needed(conn, token)
+        except tt.TrackerError as exc:
+            print(f"\n{exc}", file=sys.stderr)
+            return 1
+        finally:
+            conn.close()
+        return 0
+
+    if args.action == "needed":
+        from . import db as dbmod
+
+        conn = dbmod.connect()
+        tt.ensure_schema(conn)
+        rows = conn.execute(
+            """
+            SELECT n.item_id, i.name, SUM(n.need - n.have) AS outstanding,
+                   MAX(n.found_in_raid) AS fir, COUNT(*) AS sources,
+                   MAX(n.available) AS available
+            FROM needed_items n LEFT JOIN items i ON i.id = n.item_id
+            WHERE n.optional = 0 AND n.need > n.have AND n.alternatives <= ?
+            GROUP BY n.item_id
+            ORDER BY available DESC, outstanding DESC
+            LIMIT ?
+            """,
+            (args.max_alternatives, args.limit),
+        ).fetchall()
+        if not rows:
+            print("Nothing recorded. Run 'tracker sync' first.")
+            return 1
+        print(f"\n{'need':>5}  {'FIR':<4} {'for':<3} item")
+        for r in rows:
+            flag = "FIR" if r["fir"] else ""
+            soon = "" if r["available"] else "  (locked)"
+            print(f"{r['outstanding']:>5}  {flag:<4} {r['sources']:<3} "
+                  f"{r['name'] or r['item_id']}{soon}")
+        conn.close()
+        return 0
+
+    return 0
+
+
 def _cmd_hotkey(args: argparse.Namespace) -> int:
     """Show or change the popover hotkey."""
     from .config import LOCAL_CONFIG_PATH, set_local_override
@@ -457,6 +558,16 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("name", nargs="+", help="extract name, e.g. 'zb-1011'")
     e.add_argument("--no-open", action="store_true", help="print details only")
     e.set_defaults(func=_cmd_extract)
+
+    tr = sub.add_parser("tracker", help="connect a TarkovTracker account")
+    tr.add_argument("action", nargs="?", default="status",
+                    choices=["login", "status", "logout", "sync", "needed"])
+    tr.add_argument("--token", default=None,
+                    help="API token; omit to read stdin or $TARKOVTRACKER_TOKEN")
+    tr.add_argument("--limit", type=int, default=40, help="rows for 'needed'")
+    tr.add_argument("--max-alternatives", type=int, default=3,
+                    help="hide 'any of N' objectives wider than this")
+    tr.set_defaults(func=_cmd_tracker)
 
     hk = sub.add_parser("hotkey", help="show or change the popover hotkey")
     hk.add_argument("spec", nargs="*", help="e.g. ctrl+t (omit to show the current one)")

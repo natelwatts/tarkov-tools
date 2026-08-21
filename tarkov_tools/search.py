@@ -29,22 +29,33 @@ def _fts_query(term: str) -> str | None:
 
 
 def item_kind(conn: sqlite3.Connection, item_id: str) -> str:
-    # Order matters: magazines also carry attachment stats, so they must be
-    # recognised as magazines before falling through to "part".
+    """The item's kind, as classified at import time.
+
+    Every item carries one, so nothing shows an empty type. The per-table
+    lookups are only a fallback for databases imported before the column
+    existed.
+    """
+    row = conn.execute("SELECT kind FROM items WHERE id = ?", (item_id,)).fetchone()
+    if row and row["kind"]:
+        return row["kind"]
     for table, kind in (("ammo", "ammo"), ("weapons", "weapon"),
                         ("magazines", "magazine"), ("mods", "part")):
         try:
-            row = conn.execute(
+            hit = conn.execute(
                 f"SELECT 1 FROM {table} WHERE item_id = ?", (item_id,)
             ).fetchone()
         except sqlite3.OperationalError:
             continue
-        if row:
+        if hit:
             return kind
     return "item"
 
 
-ITEM_KINDS = ("weapon", "ammo", "magazine", "part", "item")
+# Every kind an item can be classified as. Anything not in the special
+# tables (weapons/ammo/magazines/extracts) is filtered on items.kind.
+ITEM_KINDS = ("weapon", "ammo", "magazine", "part", "gear", "med", "key",
+              "barter", "food", "grenade", "ammobox", "container", "knife",
+              "map", "money", "special", "info", "item")
 
 
 def tracker_configured(conn: sqlite3.Connection) -> bool:
@@ -132,14 +143,22 @@ def browse(conn: sqlite3.Connection, kind: str, side: str | None = None,
         "ammo": ("ammo", "a.caliber, a.penetration_power DESC"),
         "magazine": ("magazines", "a.capacity DESC, i.name"),
     }.get(kind, (None, None))
-    if not table:
-        return []
-    rows = conn.execute(
-        f"SELECT i.id, i.name, i.short_name, i.avg_24h_price "
-        f"FROM {table} a JOIN items i ON i.id = a.item_id ORDER BY {order} LIMIT ?",
-        (limit,),
-    ).fetchall()
-    return [dict(r) | {"kind": kind} for r in rows]
+    if table:
+        rows = conn.execute(
+            f"SELECT i.id, i.name, i.short_name, i.avg_24h_price "
+            f"FROM {table} a JOIN items i ON i.id = a.item_id ORDER BY {order} LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [dict(r) | {"kind": kind} for r in rows]
+
+    if kind in ITEM_KINDS:
+        rows = conn.execute(
+            "SELECT id, name, short_name, avg_24h_price FROM items "
+            "WHERE kind = ? ORDER BY name LIMIT ?",
+            (kind, limit),
+        ).fetchall()
+        return [dict(r) | {"kind": kind} for r in rows]
+    return []
 
 
 def search(conn: sqlite3.Connection, term: str, limit: int = 40,

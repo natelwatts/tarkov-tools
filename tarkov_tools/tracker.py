@@ -308,8 +308,9 @@ def sync_needed(conn, token: str | None = None, game_mode: str | None = None,
                 continue
             conn.execute(
                 """
-                INSERT INTO items (id, name, short_name, normalized_name, types, wiki_link)
-                VALUES (?,?,?,?,'["item"]',?)
+                INSERT INTO items (id, name, short_name, normalized_name, types,
+                                   wiki_link, kind)
+                VALUES (?,?,?,?,'["item"]',?,'item')
                 ON CONFLICT(id) DO UPDATE SET
                     name = COALESCE(items.name, excluded.name),
                     short_name = COALESCE(items.short_name, excluded.short_name)

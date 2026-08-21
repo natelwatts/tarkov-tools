@@ -217,8 +217,13 @@ the one search bar with everything else.
 **Tab cycles a filter** (Shift+Tab goes back, or click a chip):
 
 ```
-All | Guns | Ammo | Mags | Needed | Extracts | Exfil PMC | Exfil Scav | Exfil Co-op
+All | Guns | Ammo | Mags | Parts | Gear | Meds | Keys | Barter
+    | Needed | Have | Watch | Extracts | Exfil PMC | Exfil Scav | Exfil Co-op
 ```
+
+Every result carries a type tag - `GUN` `AMO` `MAG` `PRT` `GEAR` `MED` `KEY`
+`BART` `FOOD` `NADE` `BOX` `CONT` `BLDE` `MAP` `CASH` `EXT` - because every
+item is classified at import by its position in the game's category tree.
 
 With the box empty, a filter lists that whole category - Tab to `Ammo` for the
 full penetration chart, or `Exfil Scav` for all 62 Scav extracts. Sorted

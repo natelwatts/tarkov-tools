@@ -51,7 +51,23 @@ BASE_FILTERS = (
     ("Guns", "weapon", None),
     ("Ammo", "ammo", None),
     ("Mags", "magazine", None),
+    ("Parts", "part", None),
+    ("Gear", "gear", None),
+    ("Meds", "med", None),
+    ("Keys", "key", None),
+    ("Barter", "barter", None),
 )
+
+# Short label drawn beside every result. Every item is classified at import,
+# so no row is ever left blank.
+KIND_TAGS = {
+    "weapon": "GUN", "ammo": "AMO", "magazine": "MAG", "part": "PRT",
+    "gear": "GEAR", "med": "MED", "key": "KEY", "barter": "BART",
+    "food": "FOOD", "grenade": "NADE", "ammobox": "BOX", "container": "CONT",
+    "knife": "BLDE", "map": "MAP", "money": "CASH", "special": "SPEC",
+    "info": "INFO", "item": "ITEM",
+    "extract": "EXT", "needed": "NEED", "have": "HAVE", "watch": "WCH",
+}
 # Only offered once a TarkovTracker account has been synced. The integration
 # is optional, and an empty filter is worse than no filter.
 TRACKER_FILTER = ("Needed", "needed", None)
@@ -704,10 +720,7 @@ class Popover:
             self.results = []
         self.listbox.delete(0, "end")
         for r in self.results:
-            tag = {"weapon": "GUN", "ammo": "AMO", "magazine": "MAG",
-                   "extract": "EXT", "needed": "NEED",
-                   "have": "HAVE", "watch": "WCH",
-                   "part": "PRT"}.get(r["kind"], "   ")
+            tag = KIND_TAGS.get(r["kind"], "ITEM")
             mark = self._marks(r.get("id") or "")
             name = (r["name"] or "").replace("[DEMO] ", "")
             if r["kind"] == "needed" and r.get("short_name"):
@@ -716,7 +729,7 @@ class Popover:
                 # Two extracts can share a name (a PMC and a Scav one), so the
                 # map is shown here and the side in the detail pane.
                 name = f"{name} · {r['short_name']}"
-            self.listbox.insert("end", f"{tag} {mark:<2}{name[:32]}")
+            self.listbox.insert("end", f"{tag:<4} {mark:<2}{name[:30]}")
         if self.results:
             self.listbox.selection_clear(0, "end")
             self.listbox.selection_set(0)
@@ -863,11 +876,14 @@ class Popover:
         if extract.get("exfil_time"):
             out.append(("  exfil time  ", "label"))
             out.append((f"{extract['exfil_time']}s\n", None))
-        requirement = extract.get("requirement")
-        if requirement and requirement != "None":
-            tip = extract.get("requirement_tip")
+        # requirement_text turns the raw code and its locale tip into prose,
+        # dropping unsubstituted templates and developer notes.
+        from . import extracts as extracts_mod
+
+        requirement = extracts_mod.requirement_text(extract)
+        if requirement:
             out.append(("  requires    ", "label"))
-            out.append((f"{requirement}{f'  ({tip})' if tip else ''}\n", "warn"))
+            out.append((f"{requirement}\n", "warn"))
         if extract.get("entry_points"):
             out.append(("  spawns      ", "label"))
             out.append((f"{extract['entry_points']}\n", None))

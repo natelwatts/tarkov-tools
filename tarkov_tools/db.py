@@ -37,7 +37,8 @@ CREATE TABLE IF NOT EXISTS items (
     icon_link       TEXT,
     width           INTEGER,
     height          INTEGER,
-    weight          REAL
+    weight          REAL,
+    kind            TEXT           -- weapon/ammo/part/med/key/... never null after import
 );
 CREATE INDEX IF NOT EXISTS idx_items_norm ON items(normalized_name);
 
@@ -184,7 +185,20 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns that arrived after a database was first created.
+
+    CREATE TABLE IF NOT EXISTS silently does nothing for an existing table, so
+    new columns need adding explicitly or older databases break.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
+    if "kind" not in columns:
+        conn.execute("ALTER TABLE items ADD COLUMN kind TEXT")
+        conn.commit()
 
 
 def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:

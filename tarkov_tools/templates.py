@@ -34,6 +34,40 @@ WEAPON_CATEGORY = "5422acb9af1c889c16000029"
 AMMO_CATEGORY = "5485a8684bdc2da71d8b4567"
 MAGAZINE_CATEGORY = "5448bc234bdc2d3c308b4569"
 
+# Every item gets a short kind by walking its _parent chain to one of these
+# roots. Checked in order, so the narrower categories come first: a magazine
+# is also a weapon mod, and ammo boxes sit under their own root rather than
+# under Ammo.
+CATEGORY_KINDS: tuple[tuple[str, str], ...] = (
+    ("5422acb9af1c889c16000029", "weapon"),
+    ("5485a8684bdc2da71d8b4567", "ammo"),
+    ("5448bc234bdc2d3c308b4569", "magazine"),
+    ("543be5cb4bdc2deb348b4568", "ammobox"),
+    ("5448fe124bdc2da5018b4567", "part"),      # Weapon mod, covers every attachment
+    ("543be5e94bdc2df1348b4568", "key"),
+    ("543be5664bdc2dd4348b4569", "med"),
+    ("543be6674bdc2df1348b4569", "food"),
+    ("543be6564bdc2df4348b4568", "grenade"),
+    ("543be5f84bdc2dd4348b456a", "gear"),
+    # Rigs and backpacks sit beside Equipment rather than under it.
+    ("5448e5284bdc2dcb718b4567", "gear"),      # Chest rig
+    ("5448e53e4bdc2d60728b4567", "gear"),      # Backpack
+    ("557596e64bdc2dc2118b4571", "gear"),      # Pockets
+    ("5447e1d04bdc2dff2f8b4567", "knife"),
+    ("5448eb774bdc2d0a728b4567", "barter"),
+    ("543be5dd4bdc2deb348b4569", "money"),
+    ("567849dd4bdc2d150f8b456e", "map"),
+    # Containers of every flavour: cases, rigs' storage, stashes, crates.
+    ("566abbb64bdc2d144c8b457d", "container"),
+    ("566965d44bdc2d814c8b4571", "container"),  # Loot container
+    ("5795f317245977243854e041", "container"),  # Common container
+    ("5448bf274bdc2dfc2f8b456a", "container"),  # Portable container
+    ("5671435f4bdc2d96058b4569", "container"),  # Locking container
+    ("62f109593b54472778797866", "container"),  # Random loot container
+    ("5447e0e74bdc2d3c308b4567", "special"),
+    ("5448ecbe4bdc2d60728b4568", "info"),
+)
+
 USER_AGENT = "tarkov-tools/0.1 (personal, non-commercial)"
 
 # A community mirror of the SPT database. Any dump in the same raw format
@@ -125,7 +159,21 @@ def _short_name(item_id: str, props: dict, locale: dict) -> str | None:
     return locale.get(f"{item_id} ShortName") or props.get("ShortName") or None
 
 
-def _upsert_item_static(conn, item_id: str, props: dict, locale: dict, types: Iterable[str]) -> None:
+def classify(templates: dict, item_id: str, cache: dict) -> str:
+    """Short kind for an item, from its position in the category tree.
+
+    Every item resolves to something: falling back to "item" only happens for
+    templates that hang off no known root at all.
+    """
+    ancestors = set(_ancestors(templates, item_id, cache))
+    for category, kind in CATEGORY_KINDS:
+        if category in ancestors:
+            return kind
+    return "item"
+
+
+def _upsert_item_static(conn, item_id: str, props: dict, locale: dict,
+                        types: Iterable[str], kind: str = "item") -> None:
     """Insert/update an item WITHOUT touching price columns.
 
     Templates carry no market data, so a template import must not blank out
@@ -135,8 +183,8 @@ def _upsert_item_static(conn, item_id: str, props: dict, locale: dict, types: It
     conn.execute(
         """
         INSERT INTO items (id, name, short_name, normalized_name, types, base_price,
-                           wiki_link, icon_link, width, height, weight)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                           wiki_link, icon_link, width, height, weight, kind)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(id) DO UPDATE SET
             name            = excluded.name,
             short_name      = excluded.short_name,
@@ -145,7 +193,8 @@ def _upsert_item_static(conn, item_id: str, props: dict, locale: dict, types: It
             base_price      = COALESCE(excluded.base_price, items.base_price),
             width           = excluded.width,
             height          = excluded.height,
-            weight          = excluded.weight
+            weight          = excluded.weight,
+            kind            = excluded.kind
         """,
         (
             item_id,
@@ -159,6 +208,7 @@ def _upsert_item_static(conn, item_id: str, props: dict, locale: dict, types: It
             props.get("Width"),
             props.get("Height"),
             props.get("Weight"),
+            kind,
         ),
     )
 
@@ -187,7 +237,7 @@ def import_templates(conn, templates: dict, locale: dict, verbose: bool = True) 
     # --- ammo
     for item_id in ammo_ids:
         props = real_items[item_id]["_props"]
-        _upsert_item_static(conn, item_id, props, locale, ["ammo"])
+        _upsert_item_static(conn, item_id, props, locale, ["ammo"], "ammo")
         conn.execute(
             """
             INSERT INTO ammo (item_id, caliber, ammo_type, damage, projectile_count,
@@ -231,7 +281,7 @@ def import_templates(conn, templates: dict, locale: dict, verbose: bool = True) 
     magazine_ammo_edges = 0
     for item_id in mag_ids:
         props = real_items[item_id]["_props"]
-        _upsert_item_static(conn, item_id, props, locale, ["mods", "magazine"])
+        _upsert_item_static(conn, item_id, props, locale, ["mods", "magazine"], "magazine")
         cartridges = props.get("Cartridges") or []
         capacity = cartridges[0].get("_max_count") if cartridges else None
         conn.execute(
@@ -266,7 +316,7 @@ def import_templates(conn, templates: dict, locale: dict, verbose: bool = True) 
     weapon_ammo_edges = weapon_mag_edges = 0
     for item_id in weapon_ids:
         props = real_items[item_id]["_props"]
-        _upsert_item_static(conn, item_id, props, locale, ["gun"])
+        _upsert_item_static(conn, item_id, props, locale, ["gun"], "weapon")
         fire_modes = props.get("weapFireType") or []
         conn.execute(
             """
@@ -374,7 +424,8 @@ def import_templates(conn, templates: dict, locale: dict, verbose: bool = True) 
         parent = template.get("_parent")
         category = _display_name(parent, (templates.get(parent) or {}).get("_props") or {},
                                  locale) or "item"
-        _upsert_item_static(conn, item_id, props, locale, ["item", category])
+        _upsert_item_static(conn, item_id, props, locale, ["item", category],
+                            classify(templates, item_id, cache))
         others += 1
     if verbose:
         print(f"  other items  {others}")

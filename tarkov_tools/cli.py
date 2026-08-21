@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import textwrap
 import sys
 
 from .config import load_config, write_default_config
@@ -513,6 +514,20 @@ def _cmd_start(args: argparse.Namespace) -> int:
 
 # --- parser ------------------------------------------------------------
 
+def _sub(subparsers, name: str, summary: str, description: str,
+         examples: str = "") -> argparse.ArgumentParser:
+    """A subcommand whose --help explains itself to someone who did not build it."""
+    return subparsers.add_parser(
+        name,
+        help=summary,
+        # Dedent before stripping: these are written as indented triple-quoted
+        # blocks, and the raw formatter would print that indentation as-is.
+        description=textwrap.dedent(description).strip(),
+        epilog=textwrap.dedent(examples).strip("\n").rstrip() or None,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="tarkov-tools",
@@ -521,23 +536,75 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    g = sub.add_parser("gamma", help="display gamma, applied only while Tarkov has focus")
+    g = _sub(
+        sub, "gamma",
+        "display gamma, applied only while Tarkov has focus",
+        """
+        Raise display gamma so dark corners are readable, without leaving your
+        whole desktop washed out.
+
+        'watch' is the useful one: it waits for Tarkov, raises gamma on the
+        monitor the game is actually on, and puts it back the moment focus
+        leaves. The search popover counts as the game for this purpose, so
+        summoning it does not drop you back to a dark screen.
+
+        Windows clamps how far gamma can be pushed unless a registry value is
+        set; --unlock-range does that, and needs an administrator shell.
+        """,
+        """
+examples:
+  uv run tarkov-tools gamma watch          apply while Tarkov has focus
+  uv run tarkov-tools gamma set 1.5        set it now and leave it
+  uv run tarkov-tools gamma reset          back to 1.0
+  uv run tarkov-tools gamma displays       list monitors and their gamma
+        """,
+    )
     g.add_argument("action", nargs="?", default="watch",
-                   choices=["watch", "set", "reset", "displays"])
+                   choices=["watch", "set", "reset", "displays"],
+                   help="default: watch")
     g.add_argument("value", nargs="?", type=float, default=None, help="gamma value, e.g. 1.5")
     g.add_argument("--all-displays", action="store_true", help="apply to every monitor")
     g.add_argument("--unlock-range", action="store_true",
                    help="set GdiIcmGammaRange=256 so Windows stops clamping (needs admin)")
     g.set_defaults(func=_cmd_gamma)
 
-    s = sub.add_parser("sync", help="build or refresh the local database from tarkov.dev")
+    s = _sub(
+        sub, "sync",
+        "build or refresh the local database from tarkov.dev",
+        """
+        Fill the local database from the tarkov.dev GraphQL API, which also
+        brings in trader prices.
+
+        That API is not always up. If it fails, use 'import-templates'
+        instead - it builds the same gun, ammo, magazine and part data
+        straight from the game's own files and needs no API at all.
+        """,
+        """
+examples:
+  uv run tarkov-tools sync
+  uv run tarkov-tools sync --cache         rebuild from the last download
+        """,
+    )
     s.add_argument("--cache", action="store_true",
                    help="rebuild from the last downloaded responses instead of fetching")
     s.set_defaults(func=_cmd_sync)
 
-    t = sub.add_parser(
-        "import-templates",
-        help="build the database from raw game item templates (no API needed)",
+    t = _sub(
+        sub, "import-templates",
+        "build the database from raw game item templates (no API needed)",
+        """
+        Build the database from the game's own item templates. This is the
+        one to run first, and the one to fall back on whenever tarkov.dev is
+        down: no API key, no account, nothing to sign up for.
+
+        It brings in every item, its attachment slots and what fits them.
+        The only thing it cannot know is trader prices.
+        """,
+        """
+examples:
+  uv run tarkov-tools import-templates --download    first run - fetches everything
+  uv run tarkov-tools import-templates --items items.json --locale en.json
+        """,
     )
     t.add_argument("--download", action="store_true",
                    help="fetch a template dump and locale file first")
@@ -545,30 +612,112 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--locale", default=None, help="path to a locale en.json")
     t.set_defaults(func=_cmd_import_templates)
 
-    q = sub.add_parser("search", help="look up a gun, round or magazine")
-    q.add_argument("term", nargs="+")
+    q = _sub(
+        sub, "search",
+        "look up a gun, round or magazine",
+        """
+        Look something up without leaving the terminal. A gun lists the ammo
+        and magazines it takes, a round lists the guns that fire it, a part
+        lists the weapons it fits.
+
+        This is the same lookup the popover does; the popover is usually what
+        you want in game.
+        """,
+        """
+examples:
+  uv run tarkov-tools search m995
+  uv run tarkov-tools search mp5 --list
+        """,
+    )
+    q.add_argument("term", nargs="+", help="name or part of one, e.g. 'm995'")
     q.add_argument("--list", action="store_true", help="just list matches")
     q.set_defaults(func=_cmd_search)
 
-    a = sub.add_parser("ammo", help="penetration chart")
-    a.add_argument("caliber", nargs="?", default=None)
-    a.add_argument("--list-calibers", action="store_true")
+    a = _sub(
+        sub, "ammo",
+        "penetration chart",
+        """
+        Every round of a caliber, ordered by penetration, with damage and
+        armour damage alongside - the table worth glancing at before a raid.
+        """,
+        """
+examples:
+  uv run tarkov-tools ammo 5.56x45
+  uv run tarkov-tools ammo --list-calibers
+        """,
+    )
+    a.add_argument("caliber", nargs="?", default=None,
+                   help="e.g. 5.56x45 (omit for all)")
+    a.add_argument("--list-calibers", action="store_true",
+                   help="just show which calibers exist")
     a.set_defaults(func=_cmd_ammo)
 
-    p = sub.add_parser("popover", help="hotkey-summoned search window")
+    p = _sub(
+        sub, "popover",
+        "hotkey-summoned search window",
+        """
+        The search window on its own, without the gamma watcher. Press the
+        hotkey - Ctrl+T by default - and it appears over the game.
+
+        Tarkov must be in borderless windowed mode; nothing composites over
+        exclusive fullscreen.
+        """,
+        """
+examples:
+  uv run tarkov-tools popover
+  uv run tarkov-tools popover --hotkey ctrl+alt+k
+        """,
+    )
     p.add_argument("--hotkey", default=None, help="override the configured hotkey")
     p.set_defaults(func=_cmd_popover)
 
-    e = sub.add_parser(
-        "extract", help="look up an extract and open the wiki map with it highlighted"
+    e = _sub(
+        sub, "extract",
+        "look up an extract and open the wiki map with it highlighted",
+        """
+        Show an extract's side, chance, timer and requirement, then open the
+        wiki's interactive map with that exit selected - expanded to fill the
+        page, zoomed out to the whole map, and filtered down to extractions
+        and PMC spawns.
+
+        An already-open tab for the same map is reused rather than piling up
+        duplicates.
+        """,
+        """
+examples:
+  uv run tarkov-tools extract zb-1011
+  uv run tarkov-tools extract old gas station
+  uv run tarkov-tools extract dorms --no-open      details only
+        """,
     )
     e.add_argument("name", nargs="+", help="extract name, e.g. 'zb-1011'")
     e.add_argument("--no-open", action="store_true", help="print details only")
     e.set_defaults(func=_cmd_extract)
 
-    tr = sub.add_parser("tracker", help="connect a TarkovTracker account")
+    tr = _sub(
+        sub, "tracker",
+        "connect a TarkovTracker account",
+        """
+        Optional. Connect a TarkovTracker account and the popover gains a
+        'Needed' filter showing what your quests and hideout still want.
+
+        Everything else works without this. The token is stored in
+        config.local.json, which is git-ignored, is only ever shown masked,
+        and is used read-only - nothing here writes to your account.
+        """,
+        """
+examples:
+  uv run tarkov-tools tracker login                 prompts for the token
+  uv run tarkov-tools tracker login --token PVP_xxx
+  uv run tarkov-tools tracker status                is it connected?
+  uv run tarkov-tools tracker sync                  refresh what is needed
+  uv run tarkov-tools tracker needed                list it
+  uv run tarkov-tools tracker logout                forget the token
+        """,
+    )
     tr.add_argument("action", nargs="?", default="status",
-                    choices=["login", "status", "logout", "sync", "needed"])
+                    choices=["login", "status", "logout", "sync", "needed"],
+                    help="default: status")
     tr.add_argument("--token", default=None,
                     help="API token; omit to read stdin or $TARKOVTRACKER_TOKEN")
     tr.add_argument("--limit", type=int, default=40, help="rows for 'needed'")
@@ -576,12 +725,43 @@ def build_parser() -> argparse.ArgumentParser:
                     help="hide 'any of N' objectives wider than this")
     tr.set_defaults(func=_cmd_tracker)
 
-    hk = sub.add_parser("hotkey", help="show or change the popover hotkey")
+    hk = _sub(
+        sub, "hotkey",
+        "show or change the popover hotkey",
+        """
+        Change the key that summons the search window. The binding is claimed
+        system-wide while the tool runs, so pick something the game and your
+        browser do not need - Ctrl+T is 'new tab' in every browser.
+
+        A modifier can be side-specific: 'rctrl+t' fires only on the right
+        Ctrl, leaving the left one alone.
+        """,
+        """
+examples:
+  uv run tarkov-tools hotkey               show the current binding
+  uv run tarkov-tools hotkey ctrl+t
+  uv run tarkov-tools hotkey rctrl+alt+k
+        """,
+    )
     hk.add_argument("spec", nargs="*", help="e.g. ctrl+t (omit to show the current one)")
     hk.set_defaults(func=_cmd_hotkey)
 
-    st = sub.add_parser(
-        "start", help="run the gamma watcher and the search popover together (default)"
+    st = _sub(
+        sub, "start",
+        "run the gamma watcher and the search popover together (default)",
+        """
+        Everything at once, and what you want bound to a shortcut: the gamma
+        watcher and the search popover in one window. Ctrl-C stops both and
+        restores gamma.
+
+        This is what plain 'uv run tarkov-tools' does.
+        """,
+        """
+examples:
+  uv run tarkov-tools                      same thing
+  uv run tarkov-tools start 1.6            with an explicit gamma value
+  uv run tarkov-tools start --quiet-gamma  without the focus logging
+        """,
     )
     st.add_argument("value", nargs="?", type=float, default=None, help="gamma value, e.g. 1.5")
     st.add_argument("--hotkey", default=None, help="override the configured hotkey")

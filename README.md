@@ -37,6 +37,10 @@ is not the same as "approved". Use your own judgement.
 
 ## Quick start
 
+You need **Windows**, [uv](https://docs.astral.sh/uv/getting-started/installation/),
+and **Chrome** if you want the wiki and map features. Python itself comes from
+uv, so there is nothing else to install.
+
 ```powershell
 git clone <this repo>
 cd tarkov-tools
@@ -47,7 +51,7 @@ uv run tarkov-tools                              # start everything
 
 That last command runs **both tools in one process**: the gamma watcher and
 the search popover. Ctrl-C (or closing the window) stops both and restores
-your gamma. `scripts	arkov-tools.cmd` does the same by double-click.
+your gamma. `scripts\tarkov-tools.cmd` does the same by double-click.
 
 `tt` is a shorter alias for `tarkov-tools`.
 
@@ -62,6 +66,10 @@ your gamma. `scripts	arkov-tools.cmd` does the same by double-click.
 | `uv run tarkov-tools extract zb-1011` | open the interactive map on that extract |
 | `uv run tarkov-tools hotkey ctrl+alt+k` | rebind the popover hotkey |
 | `uv run tarkov-tools import-templates --download` | rebuild the database |
+
+**Every command explains itself** - `uv run tarkov-tools <command> --help` has
+a description and worked examples, and `uv run tarkov-tools --help` lists them
+all.
 
 ---
 

@@ -42,7 +42,7 @@ and **Chrome** if you want the wiki and map features. Python itself comes from
 uv, so there is nothing else to install.
 
 ```powershell
-git clone <this repo>
+git clone git@github.com:natelwatts/tarkov-tools.git
 cd tarkov-tools
 uv sync                                          # creates .venv, no dependencies to fetch
 uv run tarkov-tools import-templates --download  # build the item database

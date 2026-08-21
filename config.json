@@ -16,6 +16,10 @@
     "timeout_seconds": 60,
     "max_retries": 5
   },
+  "templates": {
+    "items_url": "https://raw.githubusercontent.com/paulov-t/Paulov.Tarkov.Db/master/database/templates/items.json",
+    "locale_url": "https://raw.githubusercontent.com/paulov-t/Paulov.Tarkov.Db/master/database/locales/global/en.json"
+  },
   "search": {
     "hotkey": "ctrl+alt+t",
     "max_results": 40

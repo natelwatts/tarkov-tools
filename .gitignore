@@ -8,5 +8,6 @@ venv/
 data/*.sqlite3
 data/*.db
 data/raw/
+data/templates/
 config.local.json
 *.log

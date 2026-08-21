@@ -5,7 +5,8 @@
     python -m tarkov_tools.cli gamma reset      back to 1.0
     python -m tarkov_tools.cli gamma displays   list monitors and current gamma
 
-    python -m tarkov_tools.cli sync             build/refresh the local database
+    python -m tarkov_tools.cli sync             build/refresh from the tarkov.dev API
+    python -m tarkov_tools.cli import-templates --download   build from raw game templates
     python -m tarkov_tools.cli search m995      look something up in the terminal
     python -m tarkov_tools.cli ammo             penetration chart by caliber
     python -m tarkov_tools.cli popover          hotkey-summoned search window
@@ -92,6 +93,21 @@ def _cmd_sync(args: argparse.Namespace) -> int:
     print("\ndatabase now holds:")
     for table, count in counts.items():
         print(f"  {table:18} {count}")
+    return 0
+
+
+def _cmd_import_templates(args: argparse.Namespace) -> int:
+    from .templates import run_import
+
+    counts = run_import(
+        items_path=args.items,
+        locale_path=args.locale,
+        do_download=args.download,
+    )
+    print("\ndatabase now holds:")
+    for table, count in counts.items():
+        print(f"  {table:18} {count}")
+    print("\nNote: templates carry no market prices - price columns are left as-is.")
     return 0
 
 
@@ -226,6 +242,16 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--cache", action="store_true",
                    help="rebuild from the last downloaded responses instead of fetching")
     s.set_defaults(func=_cmd_sync)
+
+    t = sub.add_parser(
+        "import-templates",
+        help="build the database from raw game item templates (no API needed)",
+    )
+    t.add_argument("--download", action="store_true",
+                   help="fetch a template dump and locale file first")
+    t.add_argument("--items", default=None, help="path to an existing items.json")
+    t.add_argument("--locale", default=None, help="path to a locale en.json")
+    t.set_defaults(func=_cmd_import_templates)
 
     q = sub.add_parser("search", help="look up a gun, round or magazine")
     q.add_argument("term", nargs="+")

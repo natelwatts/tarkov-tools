@@ -32,6 +32,18 @@ DEFAULTS: dict[str, Any] = {
         "timeout_seconds": 60,
         "max_retries": 5,
     },
+    "templates": {
+        # Raw BSG item templates. Any dump in the same format works; point
+        # these at a different mirror if this one goes stale or offline.
+        "items_url": (
+            "https://raw.githubusercontent.com/paulov-t/Paulov.Tarkov.Db/master"
+            "/database/templates/items.json"
+        ),
+        "locale_url": (
+            "https://raw.githubusercontent.com/paulov-t/Paulov.Tarkov.Db/master"
+            "/database/locales/global/en.json"
+        ),
+    },
     "search": {
         "hotkey": "ctrl+alt+t",
         "max_results": 40,

@@ -15,7 +15,7 @@ Nothing here reads, writes, or attaches to the game process.
 | Component | How it works |
 |---|---|
 | Gamma | `SetDeviceGammaRamp` against a per-display device context. Same thing the NVIDIA Control Panel slider does. |
-| Database | HTTP requests to the public tarkov.dev GraphQL API, cached into local SQLite. |
+| Database | HTTP requests to a public API or a published template dump, cached into local SQLite. Read-only, and never during a raid. |
 | Popover | An ordinary always-on-top window, like Notepad. No injection, no graphics-API hooking. |
 | Hotkey | `RegisterHotKey`, which asks Windows to route one specific combination to us. Not a keyboard hook - it cannot see any other keystroke. |
 
@@ -32,18 +32,37 @@ is not the same as "approved". Use your own judgement.
 
 ## Setup
 
+There are two independent ways to build the database. Neither needs an API key.
+
+### Option A - raw game templates (recommended, no API)
+
 ```powershell
-git clone <this repo>
-cd tarkov-tools
-python -m tarkov_tools.cli sync      # build the database (a few MB, one-off)
+python -m tarkov_tools.cli import-templates --download
 ```
 
-`sync` needs no API key. tarkov.dev is an open endpoint.
+Downloads a dump of the game's own item template database (~18 MB) plus the
+English locale file (~2.9 MB) and imports in about a second. This is the
+authoritative source: penetration, damage, ergonomics, magazine capacity and
+the entire compatibility graph are the game's real numbers.
+
+It carries **no market prices** - those do not exist in the game files.
+
+### Option B - the tarkov.dev API
+
+```powershell
+python -m tarkov_tools.cli sync
+```
+
+Same static data, plus flea prices and trader offers.
 
 > **If sync fails with `GraphQL server unavailable` / HTTP 422**, that is an
 > outage on their side, not an auth problem - their Cloudflare Worker cannot
 > reach its data backend. Auth failures would be 401/403. Retry later; the
 > client already backs off and retries five times.
+
+The two are designed to coexist. A template import never touches the price
+columns, so you can refresh static data offline and layer prices on top with
+`sync` whenever the API is reachable.
 
 ---
 
@@ -108,24 +127,55 @@ box appears. Type, arrow through results, Esc to dismiss.
 
 ## Where the data comes from
 
-Two different pipelines feed tarkov.dev, and this project consumes both:
+Two different kinds of data, with very different sources and lifetimes:
 
 - **Static stats** (penetration, damage, ergonomics, magazine capacity, and
-  crucially the compatibility lists) come from the game's own item templates.
-  They are the game's real numbers, not community measurements.
+  crucially the compatibility lists) originate in the game's own item
+  templates. They are the game's real numbers, not community measurements,
+  and they only change when the game patches.
 - **Flea prices** come from tarkov.dev's closed-source scanners, which page
-  through live market listings.
+  through live market listings. This is the only part that needs a live feed.
 
-The compatibility graph this project is built around:
+The compatibility graph this project is built around, and where each edge
+comes from in the raw template format:
 
 ```
-weapon --allowedAmmo------> ammo
-weapon --mod_magazine slot-> magazine
-magazine --allowedAmmo----> ammo
+weapon._props.Chambers[]._props.filters[].Filter          -> weapon accepts ammo
+weapon._props.Slots[_name=mod_magazine].filters[].Filter  -> weapon accepts magazine
+magazine._props.Cartridges[]._props.filters[].Filter      -> magazine accepts ammo
 ```
 
 All three edges come straight from the item templates, so "what fits what" is
-authoritative rather than inferred.
+authoritative rather than inferred. Items are classified by walking the
+`_parent` chain to a root category (Weapon `5422acb9...`, Ammo `5485a868...`,
+Magazine `5448bc23...`), which picks up every subcategory automatically.
+
+Templates only carry internal names such as `patron_556x45_M995`; display
+names live in a separate locale file keyed `"<id> Name"`, which is why the
+importer wants both files.
+
+### Changing the template source
+
+Any dump in the raw BSG format works. Point `config.json` somewhere else if
+the default mirror goes stale:
+
+```jsonc
+"templates": {
+  "items_url":  "https://.../database/templates/items.json",
+  "locale_url": "https://.../database/locales/global/en.json"
+}
+```
+
+Or import files you already have on disk:
+
+```powershell
+python -m tarkov_tools.cli import-templates --items path\to\items.json --locale path\to\en.json
+```
+
+SPT (Single Player Tarkov) maintains the canonical dump, but at time of
+writing its GitHub mirror keeps `items.json` behind git-lfs with an exhausted
+LFS budget, and its own Gitea returns 410 - hence the plain-blob mirror in the
+default config.
 
 ---
 
@@ -167,6 +217,7 @@ tarkov_tools/
   winapi.py    per-display gamma DCs, foreground process, monitor lookup
   gamma.py     ramp maths + focus watcher with guaranteed restore
   api.py       tarkov.dev GraphQL client, retry/backoff, response cache
+  templates.py raw BSG item-template importer (no API required)
   db.py        SQLite schema, upserts, FTS5 index
   ingest.py    API -> database, builds the compatibility graph
   search.py    search + relationship queries

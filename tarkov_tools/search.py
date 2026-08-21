@@ -584,6 +584,15 @@ def describe(conn: sqlite3.Connection, item_id: str) -> dict[str, Any]:
     out: dict[str, Any] = {"kind": kind, "item": dict(base), "offers": offers_for(conn, item_id)}
 
     out["lists"] = lists_for(conn, item_id)
+
+    # Flea price, when a snapshot has been pulled. Absent from the feed means
+    # the item is banned from the flea rather than that we failed to look.
+    try:
+        from . import prices as prices_mod
+
+        out["flea"] = prices_mod.price_for(conn, item_id)
+    except Exception:
+        out["flea"] = None
     # Attachments show their modifiers and what they fit. Items are classified
     # as "part" at import now, but older databases only knew "item", so both
     # are accepted - and an attachment without a mods row still gets its

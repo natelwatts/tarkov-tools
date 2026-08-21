@@ -223,6 +223,20 @@ def _price_col(row) -> str:
     return f" {_fmt_price(value):>9}" if isinstance(value, int) and value else ""
 
 
+def _refresh_prices(conn) -> bool:
+    """Pull a fresh flea snapshot if the stored one has aged out.
+
+    Wrapped so a missing module or a dead network never takes the overlay
+    with it - out-of-date prices are worth more than a crash.
+    """
+    try:
+        from . import prices as prices_mod
+
+        return prices_mod.refresh_if_stale(conn)
+    except Exception:
+        return False
+
+
 def _signed(value) -> str:
     """Modifier with an explicit sign, so +7 ergo reads differently from -7."""
     if value in (None, ""):
@@ -274,6 +288,7 @@ class Popover:
         self.status_note = ''
         self._refresh_marks()
         self._build()
+        threading.Thread(target=self._price_worker, daemon=True).start()
 
     # --- construction --------------------------------------------------
 
@@ -526,6 +541,21 @@ class Popover:
         """Thread-safe: called from the hotkey listener thread."""
         self.events.put("toggle")
 
+    def _reprice(self) -> None:
+        """Redraw the current detail now that prices have changed."""
+        self.status_note = "flea prices updated"
+        try:
+            if self.view == "search":
+                entry = self._current_result()
+                if entry:
+                    self._render(entry["id"])
+            else:
+                subject = self._current_subject()
+                if subject:
+                    self._render(subject["id"])
+        except Exception:
+            pass
+
     def _pump(self) -> None:
         try:
             while True:
@@ -541,6 +571,8 @@ class Popover:
                         self._sync_finished()
                     elif kind == "sync-failed":
                         self._sync_finished(error=str(payload))
+                    elif kind == "prices-updated":
+                        self._reprice()
         except queue.Empty:
             pass
         self.root.after(60, self._pump)
@@ -826,6 +858,27 @@ class Popover:
         threading.Thread(target=self._sync_worker, daemon=True).start()
         return "break"
 
+    def _price_worker(self) -> None:
+        """Pull a fresh flea snapshot in the background at startup.
+
+        Prices are the one thing here that goes stale by the hour, and the
+        answer wanted mid-raid is what something sells for *now*. Its own
+        connection, because SQLite connections belong to the thread that
+        made them, and silent because a failure just leaves the last
+        snapshot in place.
+        """
+        from . import db as dbmod
+
+        try:
+            conn = dbmod.connect()
+            try:
+                if _refresh_prices(conn):
+                    self.events.put(("prices-updated", None))
+            finally:
+                conn.close()
+        except Exception:
+            pass
+
     def _sync_worker(self) -> None:
         """Runs off the main thread; talks to the UI only through the queue.
 
@@ -843,6 +896,8 @@ class Popover:
                         conn, verbose=False,
                         on_status=lambda m: self.events.put(("sync-status", m)),
                     )
+                self.events.put(("sync-status", "flea prices"))
+                _refresh_prices(conn)
             finally:
                 conn.close()
             self.events.put(("sync-done", None))
@@ -1237,6 +1292,32 @@ class Popover:
             out.append(("  (no map marker for this one - opens the map unfocused)\n", "dim"))
         return out
 
+    def _flea_line(self, data: dict) -> list[tuple[str, str]]:
+        """Price, value per slot, and which way it is moving.
+
+        Value per slot is the number that decides what comes home: a 200k
+        item filling six slots loses to a 90k item filling one. It is left
+        off weapons, whose footprint depends on what is bolted to them.
+        """
+        flea = data.get("flea")
+        if not flea:
+            price = (data.get("item") or {}).get("avg_24h_price")
+            if price:
+                return [(f"  flea {_fmt_price(price)} RUB\n", "dim")]
+            return [("  not on the flea market\n", "dim")]
+
+        out = [("  flea ", "label"), (f"{_fmt_price(flea['price'])} RUB", "good")]
+        if flea.get("per_slot"):
+            slots = flea.get("slots") or 1
+            out.append((f"   {_fmt_price(flea['per_slot'])}/slot", None))
+            if slots > 1:
+                out.append((f" ({slots} slots)", "dim"))
+        change = flea.get("change_pct") or 0
+        if abs(change) >= 0.5:
+            out.append((f"   {change:+.0f}%", "good" if change > 0 else "warn"))
+        out.append(("\n", None))
+        return out
+
     def _format_part(self, data: dict) -> list[tuple[str, str]]:
         item, mod = data["item"], data.get("mod") or {}
         fits = data.get("fits") or []
@@ -1245,6 +1326,7 @@ class Popover:
         marks = self._marks(item["id"])
         if marks:
             out.append((f"  {marks} on your list\n", "good"))
+        out += self._flea_line(data)
         out.append((f"  {' / '.join(slots) or 'attachment'}\n\n", "dim"))
 
         for label, key, better_when_negative in (
@@ -1287,8 +1369,8 @@ class Popover:
         kind = data["kind"]
 
         out.append((f"{item['name']}\n", "head"))
-        price = item.get("avg_24h_price")
-        out.append((f"  flea avg {_fmt_price(price)} RUB\n\n", "dim"))
+        out += self._flea_line(data)
+        out.append(("\n", None))
         # Quest and hideout demand goes above the stats: when an item is in
         # your hands, "do I still need this?" is the first question.
         out += self._format_needs(data.get("needs") or [])

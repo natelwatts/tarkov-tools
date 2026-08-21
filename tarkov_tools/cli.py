@@ -12,6 +12,7 @@
   uv run tarkov-tools sync             build/refresh from the tarkov.dev API
   uv run tarkov-tools search m995      look something up in the terminal
   uv run tarkov-tools ammo             penetration chart by caliber
+  uv run tarkov-tools prices update    pull current flea market prices
   uv run tarkov-tools popover          search popover only
   uv run tarkov-tools extract zb-1011  open the wiki map, extract highlighted
   uv run tarkov-tools tracker login    connect your TarkovTracker account
@@ -124,6 +125,45 @@ def _cmd_import_templates(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_prices(args: argparse.Namespace) -> int:
+    from . import db as dbmod
+    from . import prices as pricesmod
+
+    conn = dbmod.connect()
+
+    if args.action == "update":
+        print(f"fetching {pricesmod.FEED_URL}")
+        try:
+            counts = pricesmod.update(conn)
+        except Exception as exc:
+            print(f"could not fetch prices: {exc}", file=sys.stderr)
+            conn.close()
+            return 1
+        print(f"  {counts['in_feed']} items priced, "
+              f"{counts['matched_our_items']} of them in your database")
+
+    if args.action == "top":
+        rows = pricesmod.top_by_slot(conn, args.limit, args.min_price)
+        if not rows:
+            print("no prices yet - run 'tarkov-tools prices update'")
+            conn.close()
+            return 1
+        print(f"\n{'value/slot':>12}  {'price':>11}  size  item")
+        for row in rows:
+            size = f"{row['width']}x{row['height']}"
+            print(f"{row['per_slot']:>12,}  {row['price']:>11,}  {size:<4}  {row['name'][:44]}")
+
+    age = pricesmod.snapshot_age(conn)
+    priced = conn.execute("SELECT COUNT(*) FROM flea_prices").fetchone()[0]
+    print()
+    if age is None:
+        print("no price snapshot yet - run 'tarkov-tools prices update'")
+    else:
+        print(f"{priced} items priced, snapshot is {age / 60:.0f} min old")
+    conn.close()
+    return 0
+
+
 BUILD_HINT = ("The item database is empty. Build it with:\n"
               "  uv run tarkov-tools import-templates --download")
 
@@ -191,7 +231,20 @@ def _print_detail(data: dict) -> None:
     money = lambda v: f"{v:,}" if isinstance(v, int) and v else "-"  # noqa: E731
 
     print(f"\n{item['name']}   [{kind}]")
-    print(f"  flea avg {money(item.get('avg_24h_price'))} RUB")
+    flea = data.get("flea")
+    if flea:
+        line = f"  flea {money(flea['price'])} RUB"
+        if flea.get("per_slot"):
+            line += f"   {money(flea['per_slot'])}/slot"
+            if (flea.get("slots") or 1) > 1:
+                line += f" ({flea['slots']} slots)"
+        if abs(flea.get("change_pct") or 0) >= 0.5:
+            line += f"   {flea['change_pct']:+.0f}%"
+        print(line)
+    elif item.get("avg_24h_price"):
+        print(f"  flea {money(item['avg_24h_price'])} RUB")
+    else:
+        print("  not on the flea market")
 
     if kind == "ammo":
         frag = stats.get("fragmentation_chance")
@@ -743,6 +796,40 @@ examples:
     tr.add_argument("--max-alternatives", type=int, default=3,
                     help="hide 'any of N' objectives wider than this")
     tr.set_defaults(func=_cmd_tracker)
+
+    pr = _sub(
+        sub, "prices",
+        "flea market prices, and what is worth the space",
+        """
+        Pull current flea market prices so the search shows what things sell
+        for - the question worth answering mid-raid.
+
+        Prices come from tarkovforge's public snapshot, which is refreshed
+        hourly and keyed by the same item ids this database already uses.
+        That is a stand-in for tarkov.dev's API, which is the canonical
+        source but has been down; nothing here needs an account either way.
+
+        Items with no price are not missing - they are banned from the flea.
+
+        'top' ranks by value per slot rather than by price, which is what
+        decides what comes home. Weapons are left out of that ranking: a
+        built gun's footprint depends on its attachments, so the template
+        size would make the number wrong.
+        """,
+        """
+examples:
+  uv run tarkov-tools prices update            pull the latest snapshot
+  uv run tarkov-tools prices top               best value per slot
+  uv run tarkov-tools prices top --min-price 50000
+  uv run tarkov-tools prices                   how fresh is what I have?
+        """,
+    )
+    pr.add_argument("action", nargs="?", default="status",
+                    choices=["status", "update", "top"], help="default: status")
+    pr.add_argument("--limit", type=int, default=30, help="rows for 'top'")
+    pr.add_argument("--min-price", type=int, default=0,
+                    help="ignore items cheaper than this in 'top'")
+    pr.set_defaults(func=_cmd_prices)
 
     hk = _sub(
         sub, "hotkey",

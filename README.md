@@ -63,6 +63,7 @@ your gamma. `scripts\tarkov-tools.cmd` does the same by double-click.
 | `uv run tarkov-tools popover` | popover only |
 | `uv run tarkov-tools search m995` | one-off lookup in the terminal |
 | `uv run tarkov-tools ammo` | penetration chart |
+| `uv run tarkov-tools prices update` | pull current flea market prices |
 | `uv run tarkov-tools extract zb-1011` | open the interactive map on that extract |
 | `uv run tarkov-tools hotkey ctrl+alt+k` | rebind the popover hotkey |
 | `uv run tarkov-tools import-templates --download` | rebuild the database |
@@ -70,6 +71,51 @@ your gamma. `scripts\tarkov-tools.cmd` does the same by double-click.
 **Every command explains itself** - `uv run tarkov-tools <command> --help` has
 a description and worked examples, and `uv run tarkov-tools --help` lists them
 all.
+
+---
+
+## Flea market prices
+
+Search anything and the detail pane leads with what it sells for, what that
+works out to **per inventory slot**, and which way the price has moved:
+
+```
+Salewa first aid kit
+  flea 37,972 RUB   18,986/slot (2 slots)   +1%
+```
+
+Per slot is the number that decides what comes home - a 200k item filling six
+slots loses to a 90k item filling one. It is left off weapons on purpose: a
+built gun's footprint depends on what is bolted to it, so the item template's
+size would make that number confidently wrong.
+
+```powershell
+uv run tarkov-tools prices update      # pull the latest snapshot
+uv run tarkov-tools prices top         # best value per slot
+uv run tarkov-tools prices             # how fresh is what I have?
+```
+
+The popover refreshes prices by itself when it starts and whenever you press
+F5, so what you see mid-raid is current to the hour without touching a
+terminal.
+
+**Where the numbers come from.** tarkov.dev's GraphQL API is the community's
+canonical price source and has been returning *"GraphQL server unavailable"*.
+So prices come from [tarkovforge](https://tarkovforge.com/market)'s public
+snapshot instead - one static JSON file, refreshed hourly, keyed by the same
+BSG item ids this database already uses, so it joins straight on with no name
+matching. It is derived from tarkov.dev, so it is the same data one step
+removed.
+
+**Items with no price are not missing** - they are the ones banned from the
+flea market, and the tool says so rather than showing a blank.
+
+**What is not here yet: which trader pays the most.** That needs per-trader
+sell prices, which only tarkov.dev has - tarkovforge reads them live from the
+same API rather than publishing them, and the raw item templates carry no
+prices at all. The display for it is already written; run
+`uv run tarkov-tools sync` once that API is back and trader prices appear on
+their own.
 
 ---
 

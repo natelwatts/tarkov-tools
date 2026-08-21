@@ -163,6 +163,17 @@ CREATE TABLE IF NOT EXISTS stash (
 );
 CREATE INDEX IF NOT EXISTS idx_stash_list ON stash(list_name);
 
+CREATE TABLE IF NOT EXISTS flea_prices (
+    item_id TEXT PRIMARY KEY,
+    price   INTEGER,
+    low     INTEGER,
+    high    INTEGER,
+    oldest  INTEGER,
+    points  INTEGER,
+    updated INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_flea_price ON flea_prices(price);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -199,6 +210,22 @@ def _migrate(conn: sqlite3.Connection) -> None:
     if "kind" not in columns:
         conn.execute("ALTER TABLE items ADD COLUMN kind TEXT")
         conn.commit()
+
+    # Whole tables added later need the same treatment as columns: the schema
+    # above only runs against a database being created for the first time.
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS flea_prices (
+            item_id TEXT PRIMARY KEY,
+            price   INTEGER,
+            low     INTEGER,
+            high    INTEGER,
+            oldest  INTEGER,
+            points  INTEGER,
+            updated INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_flea_price ON flea_prices(price);
+    """)
+    conn.commit()
 
 
 def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:

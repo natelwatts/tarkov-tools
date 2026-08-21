@@ -1,0 +1,6 @@
+# No third-party dependencies.
+# Everything uses the Python 3.12 standard library:
+#   ctypes    -> Win32 gamma + global hotkeys
+#   sqlite3   -> local item database
+#   urllib    -> tarkov.dev GraphQL client
+#   tkinter   -> popover search window

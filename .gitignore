@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# local data + user config
+data/*.sqlite3
+data/*.db
+data/raw/
+config.local.json
+*.log

@@ -1,0 +1,23 @@
+{
+  "gamma": {
+    "value": 1.5,
+    "brightness": 0.0,
+    "contrast": 1.0,
+    "exes": [
+      "EscapeFromTarkov.exe"
+    ],
+    "poll_seconds": 1.0,
+    "game_monitor_only": true
+  },
+  "api": {
+    "endpoint": "https://api.tarkov.dev/graphql",
+    "game_mode": "regular",
+    "language": "en",
+    "timeout_seconds": 60,
+    "max_retries": 5
+  },
+  "search": {
+    "hotkey": "ctrl+alt+t",
+    "max_results": 40
+  }
+}

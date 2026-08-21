@@ -146,6 +146,26 @@ def _cmd_search(args: argparse.Namespace) -> int:
 
 
 def _print_detail(data: dict) -> None:
+    if data.get("kind") == "extract":
+        e = data.get("extract") or {}
+        side = (e.get("side") or "").replace("Pmc", "PMC").replace("Coop", "Co-op")
+        print(f"\n{e.get('display_name')}   [{e.get('map_name')}]   (extract)")
+        print(f"  side          {side or '-'}")
+        if e.get("chance") is not None:
+            print(f"  chance        {e['chance']:.0f}%")
+        if e.get("exfil_time"):
+            print(f"  exfil time    {e['exfil_time']}s")
+        from . import extracts as ex_mod
+
+        requirement = ex_mod.requirement_text(e)
+        if requirement:
+            print(f"  requirement   {requirement}")
+        if e.get("entry_points"):
+            print(f"  spawns        {e['entry_points']}")
+        print("\n  open the map with:  uv run tarkov-tools extract "
+              f"\"{e.get('display_name')}\"")
+        return
+
     item, stats, kind = data["item"], data.get("stats") or {}, data["kind"]
     money = lambda v: f"{v:,}" if isinstance(v, int) and v else "-"  # noqa: E731
 
@@ -252,10 +272,9 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         print(f"  chance        {best['chance']:.0f}%")
     if best.get("exfil_time"):
         print(f"  exfil time    {best['exfil_time']}s")
-    requirement = best.get("requirement")
-    if requirement and requirement != "None":
-        tip = best.get("requirement_tip")
-        print(f"  requirement   {requirement}{f'  ({tip})' if tip else ''}")
+    requirement = ex.requirement_text(best)
+    if requirement:
+        print(f"  requirement   {requirement}")
     if best.get("entry_points"):
         print(f"  spawns        {best['entry_points']}")
 

@@ -87,9 +87,42 @@ def search(conn: sqlite3.Connection, term: str, limit: int = 40) -> list[dict[st
             }
         )
     # Surface guns/ammo/mags above generic items.
-    order = {"weapon": 0, "ammo": 1, "magazine": 2, "item": 3}
-    results.sort(key=lambda r: (order.get(r["kind"], 9), len(r["name"] or "")))
-    return results
+    # Extraction points share the search bar with items. They live in their
+    # own table rather than the item FTS index, so they are queried separately
+    # and merged in.
+    from . import extracts as extracts_mod
+
+    try:
+        for row in extracts_mod.search(conn, term, limit):
+            results.append(
+                {
+                    "id": f"extract:{row['rowid']}",
+                    "name": row.get("display_name") or row.get("name"),
+                    "short_name": row.get("map_name"),
+                    "avg_24h_price": None,
+                    "kind": "extract",
+                }
+            )
+    except sqlite3.OperationalError:
+        pass  # no extract data imported yet
+
+    lowered = term.lower()
+
+    def rank(entry: dict) -> tuple:
+        name = (entry.get("name") or "").lower()
+        if name == lowered:
+            quality = 0
+        elif name.startswith(lowered):
+            quality = 1
+        elif lowered in name:
+            quality = 2
+        else:
+            quality = 3
+        kind_order = {"weapon": 0, "ammo": 1, "magazine": 2, "extract": 3, "item": 4}
+        return (quality, kind_order.get(entry["kind"], 9), len(entry.get("name") or ""))
+
+    results.sort(key=rank)
+    return results[:limit]
 
 
 # --- relationship queries ----------------------------------------------
@@ -193,7 +226,14 @@ def offers_for(conn, item_id: str) -> list[dict]:
 
 
 def describe(conn: sqlite3.Connection, item_id: str) -> dict[str, Any]:
-    """Full detail for one item, shaped by what kind of item it is."""
+    """Full detail for one result, shaped by what kind of thing it is."""
+    if isinstance(item_id, str) and item_id.startswith("extract:"):
+        rowid = item_id.split(":", 1)[1]
+        row = conn.execute(
+            "SELECT rowid, * FROM extracts WHERE rowid = ?", (rowid,)
+        ).fetchone()
+        return {"kind": "extract", "extract": dict(row)} if row else {}
+
     base = conn.execute("SELECT * FROM items WHERE id = ?", (item_id,)).fetchone()
     if not base:
         return {}

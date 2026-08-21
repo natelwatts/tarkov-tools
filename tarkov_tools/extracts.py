@@ -298,7 +298,7 @@ def search(conn, term: str, limit: int = 25) -> list[dict]:
     keyed = f"%{_match_key(term)}%"
     rows = conn.execute(
         """
-        SELECT * FROM extracts
+        SELECT rowid, * FROM extracts
         WHERE display_name LIKE ? OR name LIKE ? OR map_name LIKE ?
            OR search_key LIKE ?
         ORDER BY
@@ -310,6 +310,39 @@ def search(conn, term: str, limit: int = 25) -> list[dict]:
         (like, like, like, keyed, term, f"{term}%", limit),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+# The game stores a requirement code plus a locale tip that often still has
+# an unfilled placeholder ("Bring {0}"), so the codes are given plain wording.
+REQUIREMENT_LABELS = {
+    "TransferItem": "paid extract - costs roubles or an item",
+    "ScavCooperation": "co-op with a Scav",
+    "WorldEvent": "needs a lever or switch activated",
+    "Train": "train - wait for departure",
+    "Reference": "needs an item",
+    "None": None,
+    "Empty": None,
+    "": None,
+}
+
+
+def requirement_text(extract: dict) -> str | None:
+    """Human wording for an extract's requirement, or None if it has none."""
+    code = (extract.get("requirement") or "").strip()
+    if code in REQUIREMENT_LABELS:
+        label = REQUIREMENT_LABELS[code]
+    else:
+        label = code or None
+    tip = (extract.get("requirement_tip") or "").strip()
+    # Drop tips that are not real prose: unsubstituted templates ("Bring {0}")
+    # and raw locale keys that had no translation ("EXFIL_Cooperate").
+    looks_like_key = bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9]*(_[A-Za-z0-9]+)+", tip))
+    # BSG leaves developer notes in some tips, e.g. "TIP IS HARDCODED".
+    looks_like_note = tip.isupper() and len(tip) > 3
+    if (tip and "{" not in tip and not looks_like_key and not looks_like_note
+            and tip.lower() != code.lower()):
+        return f"{label} ({tip})" if label else tip
+    return label
 
 
 def wiki_url(extract: dict) -> str:

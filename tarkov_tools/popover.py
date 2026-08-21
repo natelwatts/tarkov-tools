@@ -253,7 +253,7 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  type to search   ↑↓ move   Enter details   Esc hide  ",
+            text="  type to search   ↑↓ move   Enter details   Enter on EXT opens the map   Esc hide  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
@@ -386,8 +386,13 @@ class Popover:
         self.results = searchmod.search(self.conn, term, self.max_results) if term else []
         self.listbox.delete(0, "end")
         for r in self.results:
-            tag = {"weapon": "GUN", "ammo": "AMO", "magazine": "MAG"}.get(r["kind"], "   ")
+            tag = {"weapon": "GUN", "ammo": "AMO", "magazine": "MAG",
+                   "extract": "EXT"}.get(r["kind"], "   ")
             name = (r["name"] or "").replace("[DEMO] ", "")
+            if r["kind"] == "extract" and r.get("short_name"):
+                # Two extracts can share a name (a PMC and a Scav one), so the
+                # map is shown here and the side in the detail pane.
+                name = f"{name} · {r['short_name']}"
             self.listbox.insert("end", f"{tag}  {name[:34]}")
         if self.results:
             self.listbox.selection_clear(0, "end")
@@ -416,10 +421,35 @@ class Popover:
         self._move(-1)
         return "break"
 
+    def _open_extract(self, result_id: str) -> None:
+        """Hide the popover, then open the interactive map on this extract.
+
+        The popover must be hidden first: reusing an existing tab types the
+        URL with Ctrl+L, and those keystrokes would otherwise land here.
+        """
+        from . import extracts as extracts_mod
+
+        data = searchmod.describe(self.conn, result_id)
+        extract = (data or {}).get("extract")
+        if not extract:
+            return
+        url = extracts_mod.wiki_url(extract)
+        reuse = f"Map:{extract.get('wiki_page')}" if extract.get("wiki_page") else None
+        self.hide()
+        self.root.update_idletasks()
+        try:
+            extracts_mod.open_in_browser(url, reuse_title=reuse)
+        except Exception as exc:
+            print(f"could not open the map: {exc}")
+
     def _nav_enter(self, event=None):
         current = self.listbox.curselection()
         if self.results:
-            self._render(self.results[current[0] if current else 0]["id"])
+            chosen = self.results[current[0] if current else 0]
+            if chosen.get("kind") == "extract":
+                self._open_extract(chosen["id"])
+            else:
+                self._render(chosen["id"])
         return "break"
 
     def _on_select(self, event=None) -> None:
@@ -443,7 +473,39 @@ class Popover:
             return
         self._set_detail(self._format(data))
 
+    def _format_extract(self, extract: dict) -> list[tuple[str, str]]:
+        side = (extract.get("side") or "").replace("Pmc", "PMC").replace("Coop", "Co-op")
+        out: list[tuple[str, str]] = [
+            (f"{extract.get('display_name')}\n", "head"),
+            (f"  {extract.get('map_name')}\n\n", "dim"),
+        ]
+        out.append(("  side        ", "label"))
+        out.append((f"{side or '-'}\n", None))
+        if extract.get("chance") is not None:
+            out.append(("  chance      ", "label"))
+            colour = "good" if (extract["chance"] or 0) >= 100 else "warn"
+            out.append((f"{extract['chance']:.0f}%\n", colour))
+        if extract.get("exfil_time"):
+            out.append(("  exfil time  ", "label"))
+            out.append((f"{extract['exfil_time']}s\n", None))
+        requirement = extract.get("requirement")
+        if requirement and requirement != "None":
+            tip = extract.get("requirement_tip")
+            out.append(("  requires    ", "label"))
+            out.append((f"{requirement}{f'  ({tip})' if tip else ''}\n", "warn"))
+        if extract.get("entry_points"):
+            out.append(("  spawns      ", "label"))
+            out.append((f"{extract['entry_points']}\n", None))
+
+        out.append(("\n  Press Enter to open the interactive map here.\n", "head"))
+        if not extract.get("marker_id"):
+            out.append(("  (no map marker for this one - opens the map unfocused)\n", "dim"))
+        return out
+
     def _format(self, data: dict) -> list[tuple[str, str]]:
+        if data.get("kind") == "extract":
+            return self._format_extract(data.get("extract") or {})
+
         out: list[tuple[str, str]] = []
         item = data["item"]
         stats = data.get("stats") or {}

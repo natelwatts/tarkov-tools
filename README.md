@@ -194,6 +194,11 @@ saving.
   magazine that fits sorted by capacity, and which traders sell it
 - Search a **round** → every gun that fires it and every magazine that holds it
 - Search a **magazine** → what it accepts and what accepts it
+- Search an **extract** → side, chance, exfil timer, requirement and which
+  spawns reach it. **Enter opens the interactive map on it.**
+
+Results are tagged `GUN` / `AMO` / `MAG` / `EXT`, so extraction points share
+the one search bar with everything else.
 
 > Requires Tarkov in **borderless windowed** mode. Exclusive fullscreen will
 > not composite another window on top.

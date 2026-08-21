@@ -44,6 +44,9 @@ TITLE_BG = "#0f1114"
 # Column labels for magazine tables, so each row need not repeat them.
 MAG_HEADER = "     cap   ergo  name"
 
+# Floor for the popover width; it grows from here to fit the filter bar.
+BASE_WIDTH = 1000
+
 # Tab cycles these. (label, kind, side) - kind/side of None means no narrowing.
 # With the search box empty, a filter lists that whole category.
 BASE_FILTERS = (
@@ -248,7 +251,7 @@ class Popover:
         self._visible = False
         self._drag_offset: tuple[int, int] | None = None
         self._last_position: tuple[int, int] | None = None
-        self._size = (1000, 620)
+        self._size = (BASE_WIDTH, 620)
         self.filter_index = 0
         self.filters = build_filters(conn)
         self._arrow_mode = ((load_config().get('search') or {})
@@ -408,6 +411,8 @@ class Popover:
         self.root.bind("<F5>", self._sync)
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         self._set_filter(0)
+        self.root.update_idletasks()
+        self._fit_to_filters()
         self.root.withdraw()
         self.root.after(60, self._pump)
 
@@ -719,6 +724,32 @@ class Popover:
         names = [f[0] for f in self.filters]
         self.filter_index = names.index(current) if current in names else 0
         self._highlight_filters()
+        self._fit_to_filters()
+
+    def _fit_to_filters(self) -> None:
+        """Widen the window so the whole filter bar is visible.
+
+        The chips are laid out left to right with no wrapping, so with enough
+        of them the last ones are clipped or pushed off the edge entirely. The
+        natural width is measured from what the chips ask for rather than
+        guessed, and only ever grows the window - never shrinks it below the
+        base size, and never past the monitor it sits on.
+        """
+        configured = (load_config().get("search") or {}).get("width")
+        try:
+            needed = sum(w.winfo_reqwidth() for w in self.filter_bar.winfo_children())
+        except Exception:
+            return
+        # A little slack so the last chip is not flush against the border.
+        wanted = int(configured) if configured else needed + 24
+        width, height = self._size
+        screen = self.root.winfo_screenwidth()
+        wanted = max(BASE_WIDTH, min(wanted, screen - 40))
+        if wanted == width:
+            return
+        self._size = (wanted, height)
+        x, y = self._clamp_position(self.root.winfo_x(), self.root.winfo_y())
+        self.root.geometry(f"{wanted}x{height}+{x}+{y}")
 
     def _highlight_filters(self) -> None:
         for position, widget in enumerate(self.filter_labels):

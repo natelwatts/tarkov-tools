@@ -223,6 +223,10 @@ works too.
 saved to `config.local.json` and the keys follow the order, so whatever you
 put first is always Ctrl+1.
 
+The window sizes itself to fit the whole filter bar, growing as filters appear
+and shrinking back when they go. Set `search.width` in `config.json` to pin it
+to a fixed pixel width instead.
+
 ```
 All | Guns | Ammo | Mags | Parts | Gear | Meds | Keys | Barter
     | Needed | Have | Watch | Extracts | Exfil PMC | Exfil Scav | Exfil Co-op

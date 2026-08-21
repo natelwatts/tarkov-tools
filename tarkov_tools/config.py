@@ -74,6 +74,8 @@ DEFAULTS: dict[str, Any] = {
         #              so mid-text editing still works
         #   "never"  - leave them as ordinary caret movement
         "arrow_keys_switch_filters": "always",
+        # Popover width in pixels. null sizes it to fit the filter bar.
+        "width": None,
     },
 }
 

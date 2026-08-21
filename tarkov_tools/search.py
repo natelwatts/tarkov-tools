@@ -29,16 +29,22 @@ def _fts_query(term: str) -> str | None:
 
 
 def item_kind(conn: sqlite3.Connection, item_id: str) -> str:
-    for table, kind in (("ammo", "ammo"), ("weapons", "weapon"), ("magazines", "magazine")):
-        row = conn.execute(
-            f"SELECT 1 FROM {table} WHERE item_id = ?", (item_id,)
-        ).fetchone()
+    # Order matters: magazines also carry attachment stats, so they must be
+    # recognised as magazines before falling through to "part".
+    for table, kind in (("ammo", "ammo"), ("weapons", "weapon"),
+                        ("magazines", "magazine"), ("mods", "part")):
+        try:
+            row = conn.execute(
+                f"SELECT 1 FROM {table} WHERE item_id = ?", (item_id,)
+            ).fetchone()
+        except sqlite3.OperationalError:
+            continue
         if row:
             return kind
     return "item"
 
 
-ITEM_KINDS = ("weapon", "ammo", "magazine", "item")
+ITEM_KINDS = ("weapon", "ammo", "magazine", "part", "item")
 
 
 def tracker_configured(conn: sqlite3.Connection) -> bool:
@@ -96,6 +102,17 @@ def browse(conn: sqlite3.Connection, kind: str, side: str | None = None,
             for r in rows
         ]
 
+    if kind in LIST_NAMES:
+        rows = conn.execute(
+            """
+            SELECT i.id, i.name, i.short_name, i.avg_24h_price
+            FROM stash s JOIN items i ON i.id = s.item_id
+            WHERE s.list_name = ? ORDER BY i.name LIMIT ?
+            """,
+            (kind, limit),
+        ).fetchall()
+        return [dict(r) | {"kind": kind} for r in rows]
+
     if kind == "extract":
         clause = " WHERE side = ?" if side else ""
         params: tuple = (side, limit) if side else (limit,)
@@ -138,6 +155,11 @@ def search(conn: sqlite3.Connection, term: str, limit: int = 40,
         # Browsing a whole category should not be capped at a
         # result-list size meant for typed queries.
         return browse(conn, kind, side, max(limit, 300)) if kind else []
+
+    if kind in LIST_NAMES:
+        lowered_term = term.lower()
+        return [r for r in browse(conn, kind, None, 500)
+                if lowered_term in (r["name"] or "").lower()][:limit]
 
     if kind == "needed":
         if not tracker_configured(conn):
@@ -230,17 +252,57 @@ def search(conn: sqlite3.Connection, term: str, limit: int = 40,
         else:
             quality = 2
         kind_order = {"weapon": 0, "ammo": 1, "magazine": 2, "extract": 3,
-                      "needed": 4, "item": 5}
+                      "needed": 4, "part": 5, "item": 6}
         order = kind_order.get(entry["kind"], 9)
-        # Guns, ammo, magazines and extracts outrank plain items even on a
-        # weaker text match: searching "m4a1" wants the rifle, not the
-        # "M4A1 upper receiver" that merely happens to start with it. An exact
-        # name match still wins outright, whatever kind it is.
-        bucket = 1 if entry["kind"] == "item" else 0
+        # Guns, ammo, magazines and extracts outrank attachments and plain
+        # items even on a weaker text match: searching "m4a1" wants the rifle,
+        # not the "M4A1 front sight" that merely happens to start with it. An
+        # exact name match still wins outright, whatever kind it is.
+        bucket = 1 if entry["kind"] in ("part", "item") else 0
         return (exact, bucket, quality, order, len(entry.get("name") or ""))
 
     results.sort(key=rank)
     return results[:limit]
+
+
+# --- personal lists -----------------------------------------------------
+
+LIST_NAMES = ("have", "watch")
+
+
+def toggle_list(conn: sqlite3.Connection, item_id: str, list_name: str) -> bool:
+    """Add or remove an item from a list. Returns True if it is now listed."""
+    existing = conn.execute(
+        "SELECT 1 FROM stash WHERE item_id = ? AND list_name = ?", (item_id, list_name)
+    ).fetchone()
+    if existing:
+        conn.execute("DELETE FROM stash WHERE item_id = ? AND list_name = ?",
+                     (item_id, list_name))
+        conn.commit()
+        return False
+    conn.execute(
+        "INSERT INTO stash (item_id, list_name, added_at) VALUES (?,?,datetime('now'))",
+        (item_id, list_name),
+    )
+    conn.commit()
+    return True
+
+
+def listed(conn: sqlite3.Connection, list_name: str) -> set[str]:
+    """Item ids on a list, as a set for cheap membership tests while drawing."""
+    try:
+        return {r["item_id"] for r in conn.execute(
+            "SELECT item_id FROM stash WHERE list_name = ?", (list_name,))}
+    except sqlite3.Error:
+        return set()
+
+
+def lists_for(conn: sqlite3.Connection, item_id: str) -> set[str]:
+    try:
+        return {r["list_name"] for r in conn.execute(
+            "SELECT list_name FROM stash WHERE item_id = ?", (item_id,))}
+    except sqlite3.Error:
+        return set()
 
 
 # --- attachment slots ---------------------------------------------------
@@ -314,6 +376,53 @@ def weapon_slots(conn: sqlite3.Connection, weapon_id: str) -> list[dict]:
         if group != "patron_in_weapon"  # that is ammo, already shown elsewhere
     ]
     out.sort(key=lambda entry: (-entry["count"], entry["label"]))
+    return out
+
+
+def guns_for_part(conn: sqlite3.Connection, part_id: str,
+                  max_depth: int = 8) -> list[dict]:
+    """Every weapon this part can end up on.
+
+    The inverse of reachable_parts: walk parent edges upward until weapons are
+    reached. A muzzle device attaches to a barrel, which attaches to a
+    receiver, which attaches to the gun - so the answer is several levels up,
+    not one.
+    """
+    weapons = {r["item_id"] for r in conn.execute("SELECT item_id FROM weapons")}
+    seen = {part_id}
+    frontier = [part_id]
+    hits: set[str] = set()
+    slots_used: set[str] = set()
+    for _ in range(max_depth):
+        if not frontier:
+            break
+        nxt: list[str] = []
+        for node in frontier:
+            for row in conn.execute(
+                "SELECT DISTINCT parent_id, slot_name FROM item_slots WHERE item_id = ?",
+                (node,),
+            ):
+                if node == part_id:
+                    slots_used.add(slot_group(row["slot_name"]))
+                parent = row["parent_id"]
+                if parent in weapons:
+                    hits.add(parent)
+                if parent not in seen:
+                    seen.add(parent)
+                    nxt.append(parent)
+        frontier = nxt
+    if not hits:
+        return []
+    placeholders = ",".join("?" * len(hits))
+    rows = conn.execute(
+        f"""SELECT i.id, i.name, w.caliber, w.ergonomics, w.recoil_vertical
+            FROM weapons w JOIN items i ON i.id = w.item_id
+            WHERE i.id IN ({placeholders}) ORDER BY i.name""",
+        tuple(hits),
+    ).fetchall()
+    out = [dict(r) for r in rows]
+    if out:
+        out[0]["_slots"] = sorted(slot_label(s) for s in slots_used)
     return out
 
 
@@ -454,6 +563,13 @@ def describe(conn: sqlite3.Connection, item_id: str) -> dict[str, Any]:
         return {}
     kind = item_kind(conn, item_id)
     out: dict[str, Any] = {"kind": kind, "item": dict(base), "offers": offers_for(conn, item_id)}
+
+    out["lists"] = lists_for(conn, item_id)
+    mod = conn.execute("SELECT * FROM mods WHERE item_id = ?", (item_id,)).fetchone()
+    if mod and kind == "item":
+        out["kind"] = kind = "part"
+        out["mod"] = dict(mod)
+        out["fits"] = guns_for_part(conn, item_id)
 
     # What still wants this item - only if a TarkovTracker account is set up.
     out["needs"] = []

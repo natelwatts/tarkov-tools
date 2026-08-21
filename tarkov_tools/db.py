@@ -149,6 +149,19 @@ CREATE TABLE IF NOT EXISTS trader_offers (
 );
 CREATE INDEX IF NOT EXISTS idx_offers_item ON trader_offers(item_id);
 
+-- Your own lists. Deliberately a separate table so that re-importing
+-- templates or re-syncing an account never disturbs them.
+--   have  - parts and items sitting in your stash
+--   watch - things to look out for in raid
+CREATE TABLE IF NOT EXISTS stash (
+    item_id   TEXT NOT NULL,
+    list_name TEXT NOT NULL,
+    note      TEXT,
+    added_at  TEXT,
+    PRIMARY KEY (item_id, list_name)
+);
+CREATE INDEX IF NOT EXISTS idx_stash_list ON stash(list_name);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -275,7 +288,7 @@ def counts(conn: sqlite3.Connection) -> dict[str, int]:
     tables = [
         "items", "ammo", "weapons", "magazines", "mods",
         "weapon_ammo", "magazine_ammo", "weapon_magazine", "item_slots",
-        "trader_offers",
+        "trader_offers", "stash",
     ]
     return {
         t: conn.execute(f"SELECT COUNT(*) AS c FROM {t}").fetchone()["c"]

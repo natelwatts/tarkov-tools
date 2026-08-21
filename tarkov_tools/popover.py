@@ -29,6 +29,10 @@ kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 WINDOW_TITLE = "Tarkov Tools"
 
+# Markers shown beside anything on one of your lists.
+MARK_HAVE = "★"    # filled star - in your stash
+MARK_WATCH = "◆"   # diamond - looking out for it
+
 BG = "#14161a"
 BG_ALT = "#1b1e24"
 FG = "#d7dae0"
@@ -51,6 +55,8 @@ BASE_FILTERS = (
 # Only offered once a TarkovTracker account has been synced. The integration
 # is optional, and an empty filter is worse than no filter.
 TRACKER_FILTER = ("Needed", "needed", None)
+# Personal lists, only offered once they hold something.
+LIST_FILTERS = {"have": ("Have", "have", None), "watch": ("Watch", "watch", None)}
 EXTRACT_FILTERS = (
     ("Extracts", "extract", None),
     ("Exfil PMC", "extract", "Pmc"),
@@ -64,6 +70,9 @@ def build_filters(conn) -> tuple:
     filters = list(BASE_FILTERS)
     if searchmod.tracker_configured(conn):
         filters.append(TRACKER_FILTER)
+    for name, entry in LIST_FILTERS.items():
+        if searchmod.listed(conn, name):
+            filters.append(entry)
     try:
         has_extracts = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='extracts'"
@@ -207,6 +216,10 @@ class Popover:
         self.view = 'search'
         self.slot_weapon: dict | None = None
         self.slot_entries: list[dict] = []
+        self.have: set[str] = set()
+        self.watch: set[str] = set()
+        self.status_note = ''
+        self._refresh_marks()
         self._build()
 
     # --- construction --------------------------------------------------
@@ -283,6 +296,8 @@ class Popover:
         # Tab would otherwise move focus out of the entry, so both bindings
         # return "break". (ISO_Left_Tab is an X11 keysym and is not valid on
         # Windows Tk - Shift-Tab is the portable spelling.)
+        self.entry.bind("<Control-h>", lambda e: self._toggle_list("have"))
+        self.entry.bind("<Control-d>", lambda e: self._toggle_list("watch"))
         self.entry.bind("<F5>", self._sync)
         self.entry.bind("<Control-r>", self._sync)
         self.entry.bind("<Tab>", self._next_filter)
@@ -329,7 +344,7 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  type to search   Tab filter   ↑↓ move   Enter parts / map   F5 sync   Esc back  ",
+            text="  Tab filter   ↑↓ move   Enter parts / map   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
@@ -466,6 +481,56 @@ class Popover:
 
     # --- filters -------------------------------------------------------
 
+    # --- personal lists -------------------------------------------------
+
+    def _selected_item_id(self) -> str | None:
+        """The item currently highlighted, in either view."""
+        current = self.listbox.curselection()
+        if self.view == "slots":
+            # In the slot view the detail pane is a list of parts, so the
+            # weapon itself is what is highlighted.
+            return (self.slot_weapon or {}).get("id")
+        if not self.results:
+            return None
+        entry = self.results[current[0] if current else 0]
+        item_id = entry.get("id") or ""
+        return None if item_id.startswith("extract:") else item_id
+
+    def _toggle_list(self, list_name: str) -> str:
+        item_id = self._selected_item_id()
+        if not item_id:
+            return "break"
+        now_listed = searchmod.toggle_list(self.conn, item_id, list_name)
+        self._refresh_marks()
+        # The chip only exists while the list has something in it.
+        self._rebuild_filter_bar()
+        if self.view != "slots":
+            # Redraw the rows so the marker appears, keeping the selection.
+            keep = self.listbox.curselection()
+            self._on_type()
+            if keep and keep[0] < self.listbox.size():
+                self.listbox.selection_clear(0, "end")
+                self.listbox.selection_set(keep[0])
+            self._render(item_id)
+        else:
+            current = self.listbox.curselection()
+            self._render_slot(current[0] if current else 0)
+        verb = "added to" if now_listed else "removed from"
+        self.status_note = f"{verb} {list_name}"
+        return "break"
+
+    def _refresh_marks(self) -> None:
+        self.have = searchmod.listed(self.conn, "have")
+        self.watch = searchmod.listed(self.conn, "watch")
+
+    def _marks(self, item_id: str) -> str:
+        marks = ""
+        if item_id in self.have:
+            marks += MARK_HAVE
+        if item_id in self.watch:
+            marks += MARK_WATCH
+        return marks
+
     # --- slot browsing --------------------------------------------------
 
     def _enter_slots(self, weapon: dict) -> None:
@@ -500,7 +565,9 @@ class Popover:
             out.append((f"  {_signed(ergo):>6}", "good" if (ergo or 0) > 0 else "dim"))
             out.append((f"  {_signed(recoil):>6}", "good" if (recoil or 0) < 0 else "dim"))
             out.append((f"  {_signed(loud):>5}", "dim"))
-            out.append((f"  {(part['name'] or '')[:52]}\n", None))
+            mark = self._marks(part.get("id") or "")
+            out.append((f"  {mark:<2}", "good" if mark else "dim"))
+            out.append((f"{(part['name'] or '')[:50]}\n", None))
         if not parts:
             out.append(("    no parts recorded\n", "dim"))
         out.append(("\n  Esc or Backspace goes back to the results.\n", "dim"))
@@ -638,7 +705,10 @@ class Popover:
         self.listbox.delete(0, "end")
         for r in self.results:
             tag = {"weapon": "GUN", "ammo": "AMO", "magazine": "MAG",
-                   "extract": "EXT", "needed": "NEED"}.get(r["kind"], "   ")
+                   "extract": "EXT", "needed": "NEED",
+                   "have": "HAVE", "watch": "WCH",
+                   "part": "PRT"}.get(r["kind"], "   ")
+            mark = self._marks(r.get("id") or "")
             name = (r["name"] or "").replace("[DEMO] ", "")
             if r["kind"] == "needed" and r.get("short_name"):
                 name = f"{name} · {r['short_name']}"
@@ -646,7 +716,7 @@ class Popover:
                 # Two extracts can share a name (a PMC and a Scav one), so the
                 # map is shown here and the side in the detail pane.
                 name = f"{name} · {r['short_name']}"
-            self.listbox.insert("end", f"{tag}  {name[:34]}")
+            self.listbox.insert("end", f"{tag} {mark:<2}{name[:32]}")
         if self.results:
             self.listbox.selection_clear(0, "end")
             self.listbox.selection_set(0)
@@ -807,9 +877,48 @@ class Popover:
             out.append(("  (no map marker for this one - opens the map unfocused)\n", "dim"))
         return out
 
+    def _format_part(self, data: dict) -> list[tuple[str, str]]:
+        item, mod = data["item"], data.get("mod") or {}
+        fits = data.get("fits") or []
+        slots = (fits[0].get("_slots") if fits else None) or []
+        out: list[tuple[str, str]] = [(f"{item['name']}\n", "head")]
+        marks = self._marks(item["id"])
+        if marks:
+            out.append((f"  {marks} on your list\n", "good"))
+        out.append((f"  {' / '.join(slots) or 'attachment'}\n\n", "dim"))
+
+        for label, key, better_when_negative in (
+            ("ergonomics", "ergonomics", False), ("recoil", "recoil_modifier", True),
+            ("accuracy", "accuracy_modifier", False), ("loudness", "loudness", True),
+        ):
+            value = mod.get(key)
+            if value is None:
+                continue
+            good = (value < 0) if better_when_negative else (value > 0)
+            out.append((f"  {label:<11}", "label"))
+            out.append((f"{_signed(value)}\n", "good" if good and value else "dim"))
+        if mod.get("weight"):
+            out.append(("  weight     ", "label"))
+            out.append((f"{mod['weight']} kg\n", "dim"))
+
+        out += self._format_needs(data.get("needs") or [])
+
+        if fits:
+            out.append((f"\n  FITS ON  ({len(fits)} weapons)\n", "head"))
+            for gun in fits[:14]:
+                out.append((f"    {(gun['name'] or '')[:46]:<46}", None))
+                out.append((f"  {gun.get('caliber') or ''}\n", "dim"))
+            if len(fits) > 14:
+                out.append((f"    ... and {len(fits) - 14} more\n", "dim"))
+        else:
+            out.append(("\n  no weapon takes this directly\n", "dim"))
+        return out
+
     def _format(self, data: dict) -> list[tuple[str, str]]:
         if data.get("kind") == "extract":
             return self._format_extract(data.get("extract") or {})
+        if data.get("kind") == "part":
+            return self._format_part(data)
 
         out: list[tuple[str, str]] = []
         item = data["item"]

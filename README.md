@@ -196,6 +196,18 @@ saving.
 - Search a **magazine** → what it accepts and what accepts it
 - **Enter on a gun** → its attachment categories; arrow through them to see
   every part that fits, sorted by ergonomics then recoil. Esc goes back.
+- Search a **part** → its ergo/recoil/accuracy/loudness and every weapon it
+  fits on, however many levels up that is.
+
+### Your own lists
+
+**Ctrl+H** marks something as in your stash, **Ctrl+D** as worth looking out
+for. Marked items carry a star or diamond everywhere they appear - including
+in a gun's parts list, so browsing a build shows at a glance which pieces you
+already own. Each list gets its own Tab filter once it holds something.
+
+The lists live in their own table, so re-importing templates or re-syncing an
+account never disturbs them.
 - Search an **extract** → side, chance, exfil timer, requirement and which
   spawns reach it. **Enter opens the interactive map on it.**
 

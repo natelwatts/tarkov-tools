@@ -197,8 +197,15 @@ saving.
 - **Enter on a gun** → its attachment categories; arrow through them to see
   every part that fits, sorted by ergonomics then recoil.
 - **Enter on a category** → those parts as rows of their own, so you can walk
-  them one at a time, mark them, or open one on the wiki. Esc backs out a
-  level at a time: parts → categories → results.
+  them one at a time, mark them, or open one on the wiki.
+- **Enter on a part** → every weapon it fits, as rows. The detail pane only
+  has room for the first handful, and a common part fits dozens.
+- Enter on one of those weapons opens *its* categories, so you can follow a
+  part onto a gun and straight into what else that gun takes.
+
+**Esc backs out one level at a time**, however deep you went, and hides the
+window once you are back at the results. Typing abandons the whole trail and
+searches again.
 - Search a **part** → its ergo/recoil/accuracy/loudness and every weapon it
   fits on, however many levels up that is.
 

@@ -200,6 +200,16 @@ saving.
 Results are tagged `GUN` / `AMO` / `MAG` / `EXT`, so extraction points share
 the one search bar with everything else.
 
+**Tab cycles a filter** (Shift+Tab goes back, or click a chip):
+
+```
+All | Guns | Ammo | Mags | Extracts | Exfil PMC | Exfil Scav | Exfil Co-op
+```
+
+With the box empty, a filter lists that whole category - Tab to `Ammo` for the
+full penetration chart, or `Exfil Scav` for all 62 Scav extracts. Sorted
+sensibly per category: ammo by caliber then penetration, mags by capacity.
+
 > Requires Tarkov in **borderless windowed** mode. Exclusive fullscreen will
 > not composite another window on top.
 

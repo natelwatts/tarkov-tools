@@ -355,7 +355,7 @@ def import_wiki_only_maps(conn, verbose: bool = True) -> int:
     return total
 
 
-def search(conn, term: str, limit: int = 25) -> list[dict]:
+def search(conn, term: str, limit: int = 25, side: str | None = None) -> list[dict]:
     """Find extracts by display or internal name, best matches first."""
     ensure_schema(conn)
     term = (term or "").strip()
@@ -365,18 +365,19 @@ def search(conn, term: str, limit: int = 25) -> list[dict]:
     # Normalised key so punctuation never blocks a match: "smugglers boat"
     # finds "Smugglers' Boat", and "d-2" finds "EXFIL_Bunker_D2".
     keyed = f"%{_match_key(term)}%"
+    side_clause = " AND side = ?" if side else ""
     rows = conn.execute(
-        """
+        f"""
         SELECT rowid, * FROM extracts
-        WHERE display_name LIKE ? OR name LIKE ? OR map_name LIKE ?
-           OR search_key LIKE ?
+        WHERE (display_name LIKE ? OR name LIKE ? OR map_name LIKE ?
+           OR search_key LIKE ?){side_clause}
         ORDER BY
             CASE WHEN LOWER(display_name) = LOWER(?) THEN 0
                  WHEN display_name LIKE ? THEN 1 ELSE 2 END,
             LENGTH(display_name), map_name
         LIMIT ?
         """,
-        (like, like, like, keyed, term, f"{term}%", limit),
+        (like, like, like, keyed, *( (side,) if side else () ), term, f"{term}%", limit),
     ).fetchall()
     return [dict(r) for r in rows]
 

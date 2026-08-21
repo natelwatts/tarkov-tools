@@ -39,6 +39,19 @@ TITLE_BG = "#0f1114"
 # Column labels for magazine tables, so each row need not repeat them.
 MAG_HEADER = "     cap   ergo  name"
 
+# Tab cycles these. (label, kind, side) - kind/side of None means no narrowing.
+# With the search box empty, a filter lists that whole category.
+FILTERS = (
+    ("All", None, None),
+    ("Guns", "weapon", None),
+    ("Ammo", "ammo", None),
+    ("Mags", "magazine", None),
+    ("Extracts", "extract", None),
+    ("Exfil PMC", "extract", "Pmc"),
+    ("Exfil Scav", "extract", "Scav"),
+    ("Exfil Co-op", "extract", "Coop"),
+)
+
 # Penetration bands used for the colour cue, matching how players talk about
 # armour class: roughly "handles class N".
 PEN_BANDS = [(20, "#8a5a5a"), (30, "#8a7a4a"), (37, "#7a8a4a"), (45, "#5a8a5a"), (999, "#4a8a7a")]
@@ -153,6 +166,7 @@ class Popover:
         self._drag_offset: tuple[int, int] | None = None
         self._last_position: tuple[int, int] | None = None
         self._size = (1000, 620)
+        self.filter_index = 0
         self._build()
 
     # --- construction --------------------------------------------------
@@ -225,6 +239,24 @@ class Popover:
         self.entry.bind("<Up>", self._nav_up)
         self.entry.bind("<Return>", self._nav_enter)
         self.entry.bind("<Escape>", lambda e: self.hide())
+        # Tab would otherwise move focus out of the entry, so both bindings
+        # return "break". (ISO_Left_Tab is an X11 keysym and is not valid on
+        # Windows Tk - Shift-Tab is the portable spelling.)
+        self.entry.bind("<Tab>", self._next_filter)
+        self.entry.bind("<Shift-Tab>", self._prev_filter)
+
+        # filter chips
+        self.filter_bar = tk.Frame(inner, bg=BG_ALT)
+        self.filter_bar.pack(fill="x")
+        self.filter_labels = []
+        tk.Label(self.filter_bar, text="  Tab ", bg=BG_ALT, fg="#5a606c",
+                 font=(mono, 9)).pack(side="left")
+        for index, (label, _kind, _side) in enumerate(FILTERS):
+            widget = tk.Label(self.filter_bar, text=f" {label} ", bg=BG_ALT,
+                              fg=FG_DIM, font=(mono, 9), padx=4)
+            widget.pack(side="left")
+            widget.bind("<Button-1>", lambda e, i=index: self._set_filter(i))
+            self.filter_labels.append(widget)
 
         body = tk.Frame(inner, bg=BG)
         body.pack(fill="both", expand=True)
@@ -253,7 +285,7 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  type to search   ↑↓ move   Enter details   Enter on EXT opens the map   Esc hide  ",
+            text="  type to search   Tab filter   ↑↓ move   Enter details / open map   Esc hide  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
@@ -261,6 +293,7 @@ class Popover:
 
         self.root.bind("<Escape>", lambda e: self.hide())
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
+        self._set_filter(0)
         self.root.withdraw()
         self.root.after(60, self._pump)
 
@@ -377,13 +410,41 @@ class Popover:
             pass
         self.root.after(60, self._pump)
 
+    # --- filters -------------------------------------------------------
+
+    def _set_filter(self, index: int) -> str:
+        self.filter_index = index % len(FILTERS)
+        for position, widget in enumerate(self.filter_labels):
+            active = position == self.filter_index
+            widget.configure(
+                fg=BG if active else FG_DIM,
+                bg=ACCENT if active else BG_ALT,
+            )
+        self._on_type()
+        return "break"
+
+    def _next_filter(self, event=None) -> str:
+        return self._set_filter(self.filter_index + 1)
+
+    def _prev_filter(self, event=None) -> str:
+        return self._set_filter(self.filter_index - 1)
+
     # --- search --------------------------------------------------------
 
     def _on_type(self, event=None) -> None:
-        if event is not None and event.keysym in ("Up", "Down", "Return", "Escape"):
+        if event is not None and event.keysym in ("Up", "Down", "Return", "Escape",
+                                                  "Tab", "ISO_Left_Tab"):
             return
         term = self.entry.get().strip()
-        self.results = searchmod.search(self.conn, term, self.max_results) if term else []
+        _label, kind, side = FILTERS[self.filter_index]
+        # An active filter with an empty box lists that whole category, so the
+        # filter doubles as a way to browse.
+        if term or kind:
+            self.results = searchmod.search(
+                self.conn, term, self.max_results, kind=kind, side=side
+            )
+        else:
+            self.results = []
         self.listbox.delete(0, "end")
         for r in self.results:
             tag = {"weapon": "GUN", "ammo": "AMO", "magazine": "MAG",

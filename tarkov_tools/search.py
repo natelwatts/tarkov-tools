@@ -38,14 +38,66 @@ def item_kind(conn: sqlite3.Connection, item_id: str) -> str:
     return "item"
 
 
-def search(conn: sqlite3.Connection, term: str, limit: int = 40) -> list[dict[str, Any]]:
-    """Find items by name. Returns [{id, name, short_name, kind}]."""
+ITEM_KINDS = ("weapon", "ammo", "magazine", "item")
+
+
+def browse(conn: sqlite3.Connection, kind: str, side: str | None = None,
+           limit: int = 200) -> list[dict[str, Any]]:
+    """Everything of one kind, for when the search box is empty.
+
+    Lets a filter double as a browsable list: pick "Ammo" and see the whole
+    chart, pick "Scav extracts" and see all of them.
+    """
+    if kind == "extract":
+        clause = " WHERE side = ?" if side else ""
+        params: tuple = (side, limit) if side else (limit,)
+        rows = conn.execute(
+            f"SELECT rowid, display_name, map_name FROM extracts{clause}"
+            " ORDER BY map_name, display_name LIMIT ?",
+            params,
+        ).fetchall()
+        return [
+            {"id": f"extract:{r['rowid']}", "name": r["display_name"],
+             "short_name": r["map_name"], "avg_24h_price": None, "kind": "extract"}
+            for r in rows
+        ]
+
+    table, order = {
+        "weapon": ("weapons", "i.name"),
+        "ammo": ("ammo", "a.caliber, a.penetration_power DESC"),
+        "magazine": ("magazines", "a.capacity DESC, i.name"),
+    }.get(kind, (None, None))
+    if not table:
+        return []
+    rows = conn.execute(
+        f"SELECT i.id, i.name, i.short_name, i.avg_24h_price "
+        f"FROM {table} a JOIN items i ON i.id = a.item_id ORDER BY {order} LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [dict(r) | {"kind": kind} for r in rows]
+
+
+def search(conn: sqlite3.Connection, term: str, limit: int = 40,
+           kind: str | None = None, side: str | None = None) -> list[dict[str, Any]]:
+    """Find items and extracts by name.
+
+    kind narrows to one of weapon/ammo/magazine/extract; side further narrows
+    extracts to Pmc/Scav/Coop. With no term but a kind, the whole category is
+    listed instead of nothing.
+    """
     term = (term or "").strip()
     if not term:
-        return []
+        # Browsing a whole category should not be capped at a
+        # result-list size meant for typed queries.
+        return browse(conn, kind, side, max(limit, 300)) if kind else []
+
+    want_items = kind is None or kind in ITEM_KINDS
+    want_extracts = kind is None or kind == "extract"
+    # Filtering happens after the query, so pull a wider net when narrowing.
+    fetch = limit if kind is None else limit * 6
 
     rows: list[sqlite3.Row] = []
-    fts = _fts_query(term)
+    fts = _fts_query(term) if want_items else None
     if fts:
         try:
             rows = conn.execute(
@@ -57,12 +109,12 @@ def search(conn: sqlite3.Connection, term: str, limit: int = 40) -> list[dict[st
                 ORDER BY bm25(items_fts), LENGTH(i.name)
                 LIMIT ?
                 """,
-                (fts, limit),
+                (fts, fetch),
             ).fetchall()
         except sqlite3.OperationalError:
             rows = []
 
-    if not rows:
+    if want_items and not rows:
         like = f"%{term}%"
         rows = conn.execute(
             """
@@ -72,18 +124,21 @@ def search(conn: sqlite3.Connection, term: str, limit: int = 40) -> list[dict[st
             ORDER BY LENGTH(name)
             LIMIT ?
             """,
-            (like, like, like, limit),
+            (like, like, like, fetch),
         ).fetchall()
 
     results = []
     for row in rows:
+        row_kind = item_kind(conn, row["id"])
+        if kind is not None and row_kind != kind:
+            continue
         results.append(
             {
                 "id": row["id"],
                 "name": row["name"],
                 "short_name": row["short_name"],
                 "avg_24h_price": row["avg_24h_price"],
-                "kind": item_kind(conn, row["id"]),
+                "kind": row_kind,
             }
         )
     # Surface guns/ammo/mags above generic items.
@@ -93,7 +148,8 @@ def search(conn: sqlite3.Connection, term: str, limit: int = 40) -> list[dict[st
     from . import extracts as extracts_mod
 
     try:
-        for row in extracts_mod.search(conn, term, limit):
+        for row in (extracts_mod.search(conn, term, fetch, side=side)
+                    if want_extracts else []):
             results.append(
                 {
                     "id": f"extract:{row['rowid']}",

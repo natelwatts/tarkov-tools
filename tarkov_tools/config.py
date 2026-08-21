@@ -53,6 +53,10 @@ DEFAULTS: dict[str, Any] = {
         # The map has no filter URL parameter, so its sidebar is clicked;
         # set this false to leave the map exactly as the wiki renders it.
         "apply_map_filters": True,
+        # Expand the map to fill the page, and pull the zoom right back out,
+        # so the whole map is readable instead of just the focused marker.
+        "fullscreen_map": True,
+        "zoom_out_map": True,
         "categories": [
             ["Extractions", "PMC"],
             ["Extractions", "Scav"],

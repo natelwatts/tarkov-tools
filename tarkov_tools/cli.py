@@ -293,13 +293,20 @@ def _cmd_extract(args: argparse.Namespace) -> int:
         return 0
 
     # Prefer an already-open tab for the same map over another duplicate.
-    reuse_title = f"Map:{best.get('wiki_page')}" if best.get("wiki_page") else None
+    reuse_title = ex.map_title(best["wiki_page"]) if best.get("wiki_page") else None
     opened, how = ex.open_in_browser(url, reuse_title=reuse_title)
     print(f"  {'opened in ' + how if opened else how}")
 
     cfg = load_config().get("extracts", {})
     if opened and cfg.get("apply_map_filters", True) and best.get("wiki_page"):
-        if ex.apply_map_filters(best["wiki_page"], cfg.get("categories"), verbose=True):
+        if ex.prepare_map(
+            best["wiki_page"],
+            cfg.get("categories"),
+            verbose=True,
+            fullscreen=cfg.get("fullscreen_map", True),
+            unzoom=cfg.get("zoom_out_map", True),
+            marker_name=best.get("display_name"),
+        ):
             print("  map filtered to the categories you care about")
     conn.close()
     return 0 if opened else 1

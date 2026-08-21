@@ -904,15 +904,23 @@ class Popover:
         if not extract:
             return
         url = extracts_mod.wiki_url(extract)
-        reuse = f"Map:{extract.get('wiki_page')}" if extract.get("wiki_page") else None
+        reuse = (
+            extracts_mod.map_title(extract["wiki_page"])
+            if extract.get("wiki_page")
+            else None
+        )
         self.hide()
         self.root.update_idletasks()
         try:
             opened, _ = extracts_mod.open_in_browser(url, reuse_title=reuse)
             cfg = load_config().get("extracts", {})
             if opened and cfg.get("apply_map_filters", True) and extract.get("wiki_page"):
-                extracts_mod.apply_map_filters(
-                    extract["wiki_page"], cfg.get("categories")
+                extracts_mod.prepare_map(
+                    extract["wiki_page"],
+                    cfg.get("categories"),
+                    fullscreen=cfg.get("fullscreen_map", True),
+                    unzoom=cfg.get("zoom_out_map", True),
+                    marker_name=extract.get("display_name"),
                 )
         except Exception as exc:
             print(f"could not open the map: {exc}")

@@ -1,4 +1,9 @@
-"""Set the wiki map's category filters after it loads.
+"""Drive the wiki map once it loads: expand it, filter it, frame it.
+
+The map opens zoomed hard into the marker from the URL, which says nothing
+about where the extract actually is. So after it loads it is expanded to fill
+the page, cut down to the categories worth seeing, zoomed back out to the
+whole map, and the marker is re-selected to bring its popup back.
 
 The interactive map takes no filter parameters in its URL - its bundle reads
 only `marker`, `canvasEngine`, `skin` and `wgUserId` - and it does not persist
@@ -26,7 +31,8 @@ its section's vertical band.
 
 This drives someone else's web page, so treat it as best effort: it is wrapped
 so any failure leaves the map open and simply unfiltered, and it can be turned
-off with `extracts.apply_map_filters` in config.json.
+off with `extracts.apply_map_filters`, `extracts.fullscreen_map` and
+`extracts.zoom_out_map` in config.json.
 """
 
 from __future__ import annotations
@@ -117,6 +123,128 @@ def _read_sidebar(uia, UIA, hwnd):
     if not _find(labels, "Hide All") or not _section_bands(labels):
         return None
     return labels
+
+
+def _find_named(uia, UIA, hwnd, name: str):
+    """Any element with this exact name, whatever its control type.
+
+    The map's own controls are a mix: the zoom buttons really are Buttons,
+    but "Enter fullscreen" is a Hyperlink, so searching by type would miss it.
+    """
+    try:
+        root = uia.ElementFromHandle(ctypes.c_void_p(hwnd))
+        everything = root.FindAll(UIA.TreeScope_Subtree, uia.CreateTrueCondition())
+    except Exception:
+        return None
+    for index in range(everything.Length):
+        element = everything.GetElement(index)
+        try:
+            if (element.CurrentName or "").strip() == name:
+                return element
+        except Exception:
+            continue
+    return None
+
+
+def enter_fullscreen(hwnd, timeout: float = 20.0, grace: float = 4.0,
+                     verbose: bool = False) -> bool:
+    """Expand the map to fill the page.
+
+    This is the first thing done to a freshly opened map, so it has to be
+    careful about *which* page it is looking at. The window title is already
+    "Map:<name>" while the reload is still in flight, so for a moment the
+    accessibility tree still describes the previous page - and if that page
+    was left expanded, a naive "is it already fullscreen?" check reads its
+    stale "Exit fullscreen" control and concludes there is nothing to do.
+    The new page then renders unexpanded and stays that way.
+
+    So the wait is for "Enter fullscreen" to appear, which only a rendered,
+    unexpanded map offers. "Exit fullscreen" is accepted as already-done only
+    after the grace period, by which point the reload has landed.
+    """
+    from .browser_tabs import _uia
+
+    start = time.monotonic()
+    deadline = start + timeout
+    uia = UIA = None
+    while time.monotonic() < deadline:
+        created = _uia()
+        if created:
+            uia, UIA = created
+            control = _find_named(uia, UIA, hwnd, "Enter fullscreen")
+            if control and _invoke(uia, UIA, control):
+                time.sleep(1.2)
+                if verbose:
+                    print("  map: fullscreen")
+                return True
+            if (
+                time.monotonic() - start > grace
+                and _find_named(uia, UIA, hwnd, "Exit fullscreen")
+            ):
+                return True  # genuinely expanded already
+        time.sleep(0.5)
+
+    if verbose:
+        print("  map: could not enter fullscreen")
+    return False
+
+
+def zoom_out(hwnd, presses: int = 10, verbose: bool = False) -> int:
+    """Pull back to the whole map.
+
+    Opening on a marker zooms right in, which loses all sense of where the
+    extract actually is relative to everything else.
+    """
+    from .browser_tabs import _uia
+
+    created = _uia()
+    if not created:
+        return 0
+    uia, UIA = created
+    done = 0
+    for _ in range(presses):
+        control = _find_named(uia, UIA, hwnd, "Zoom out")
+        if not control:
+            break
+        try:
+            if not control.CurrentIsEnabled:
+                break  # already as far out as the map goes
+        except Exception:
+            pass
+        if not _invoke(uia, UIA, control):
+            break
+        done += 1
+        time.sleep(0.35)
+    if verbose and done:
+        print(f"  map: zoomed out ({done})")
+    return done
+
+
+def show_marker(hwnd, name: str, verbose: bool = False) -> bool:
+    """Select a marker by name so its popup opens, without moving the map.
+
+    The ?marker= parameter opens the popup on load, but entering fullscreen
+    re-mounts the map and closes it again. The sidebar's search list keeps an
+    entry per marker even while collapsed, and invoking one selects that
+    marker and opens its popup where it sits - unlike the URL parameter, it
+    does not zoom in. So the popup is restored last, after the view is
+    already framed the way it should stay.
+    """
+    from .browser_tabs import _uia
+
+    created = _uia()
+    if not created:
+        return False
+    uia, UIA = created
+    entry = _find_named(uia, UIA, hwnd, name)
+    if not entry or not _invoke(uia, UIA, entry):
+        if verbose:
+            print(f"  map: could not open the popup for {name}")
+        return False
+    time.sleep(0.6)
+    if verbose:
+        print(f"  map: showing {name}")
+    return True
 
 
 def apply_filters(hwnd, wanted=DEFAULT_WANTED, timeout: float = 25.0,

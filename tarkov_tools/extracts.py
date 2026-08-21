@@ -435,28 +435,82 @@ def wiki_url(extract: dict) -> str:
     return f"{WIKI_BASE}Map:{page}"
 
 
-def apply_map_filters(wiki_page: str, wanted=None, verbose: bool = False) -> bool:
-    """Hide every map category except the ones worth seeing.
+def map_title(wiki_page: str) -> str:
+    """How this map's page names itself in a tab title.
 
-    Best effort: the map exposes no filter URL parameter, so this drives its
-    sidebar. Any failure just leaves the map unfiltered.
+    Wiki page names use underscores in the URL but spaces everywhere they are
+    displayed, so "Streets_of_Tarkov" is titled "Map:Streets of Tarkov". The
+    difference matters: matching the URL form finds nothing for any map whose
+    name is more than one word.
+    """
+    return f"Map:{wiki_page.replace('_', ' ')}"
+
+
+def find_map_window(wiki_page: str, timeout: float = 15.0):
+    """The Chrome window showing this map, once its title has caught up."""
+    from .browser_tabs import _window_text, chrome_windows
+
+    needle = map_title(wiki_page).lower()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for hwnd in chrome_windows():
+            if needle in (_window_text(hwnd) or "").lower():
+                return hwnd
+        time.sleep(0.6)
+    return None
+
+
+def prepare_map(wiki_page: str, wanted=None, verbose: bool = False,
+                fullscreen: bool = True, unzoom: bool = True,
+                marker_name: str | None = None, settle: float = 3.0) -> bool:
+    """Set the map up for reading: expanded, filtered, and zoomed right out.
+
+    Order matters. Fullscreen goes first because expanding re-mounts the map,
+    which invalidates anything found before it and closes the popup that
+    ?marker= opened on load. Framing - filters, then zoom - comes next. The
+    popup is restored last, by selecting the marker rather than by navigating
+    to it, so the whole map stays in view.
+
+    Best effort throughout: the map exposes no URL parameters for any of
+    this, so it is driven through its own controls, and any failure just
+    leaves the map open in whatever state it reached.
     """
     try:
-        from .browser_tabs import _window_text, chrome_windows
-        from .map_filters import DEFAULT_WANTED, apply_filters
+        from .map_filters import (
+            DEFAULT_WANTED,
+            apply_filters,
+            enter_fullscreen,
+            show_marker,
+            zoom_out,
+        )
+
+        hwnd = find_map_window(wiki_page)
+        if not hwnd:
+            return False
+
+        # Reusing a tab means the title already reads "Map:<name>" while the
+        # reload is still in flight, so the page under inspection can briefly
+        # be the previous one. Let the navigation land before driving it.
+        time.sleep(settle)
+
+        if fullscreen:
+            enter_fullscreen(hwnd, verbose=verbose)
 
         wanted = tuple(tuple(pair) for pair in (wanted or DEFAULT_WANTED))
-        needle = f"Map:{wiki_page}".lower()
-        deadline = time.monotonic() + 15.0
-        while time.monotonic() < deadline:
-            for hwnd in chrome_windows():
-                if needle in (_window_text(hwnd) or "").lower():
-                    return apply_filters(hwnd, wanted=wanted, verbose=verbose)
-            time.sleep(0.6)
+        filtered = apply_filters(hwnd, wanted=wanted, verbose=verbose)
+
+        if unzoom:
+            zoom_out(hwnd, verbose=verbose)
+
+        # Last, so the popup survives everything that reframes the map.
+        if marker_name:
+            show_marker(hwnd, marker_name, verbose=verbose)
+        return filtered
     except Exception as exc:
         if verbose:
-            print(f"  map filters skipped: {exc}")
+            print(f"  map setup skipped: {exc}")
     return False
+
 
 
 def find_chrome() -> str | None:

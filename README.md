@@ -242,6 +242,10 @@ uv run tarkov-tools tracker needed                    # the shopping list
 Tab to the **Needed** filter for everything outstanding, largest shortfall
 first, with anything gated behind an unmet prerequisite marked `(locked)`.
 
+**Press F5 in the popover** (or Ctrl+R) to re-sync without leaving the game.
+It runs on a worker thread so the window stays usable, reports each stage as
+it goes, and the `Needed` filter appears the moment a first sync completes.
+
 **How it works.** The progress API returns only ids and completion flags - no
 item names and no quantities remaining - so what you still need is computed by
 joining your progress against TarkovTracker's task and hideout definitions,

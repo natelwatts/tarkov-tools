@@ -13,6 +13,7 @@ from __future__ import annotations
 import ctypes
 import queue
 import sqlite3
+import threading
 import tkinter as tk
 from ctypes import wintypes
 from tkinter import font as tkfont
@@ -189,6 +190,8 @@ class Popover:
         self._size = (1000, 620)
         self.filter_index = 0
         self.filters = build_filters(conn)
+        self._syncing = False
+        self._sync_lines: list[str] = []
         self._build()
 
     # --- construction --------------------------------------------------
@@ -264,6 +267,8 @@ class Popover:
         # Tab would otherwise move focus out of the entry, so both bindings
         # return "break". (ISO_Left_Tab is an X11 keysym and is not valid on
         # Windows Tk - Shift-Tab is the portable spelling.)
+        self.entry.bind("<F5>", self._sync)
+        self.entry.bind("<Control-r>", self._sync)
         self.entry.bind("<Tab>", self._next_filter)
         self.entry.bind("<Shift-Tab>", self._prev_filter)
 
@@ -271,11 +276,12 @@ class Popover:
         self.filter_bar = tk.Frame(inner, bg=BG_ALT)
         self.filter_bar.pack(fill="x")
         self.filter_labels = []
+        self.font_chip = (mono, 9)
         tk.Label(self.filter_bar, text="  Tab ", bg=BG_ALT, fg="#5a606c",
-                 font=(mono, 9)).pack(side="left")
+                 font=self.font_chip).pack(side="left")
         for index, (label, _kind, _side) in enumerate(self.filters):
             widget = tk.Label(self.filter_bar, text=f" {label} ", bg=BG_ALT,
-                              fg=FG_DIM, font=(mono, 9), padx=4)
+                              fg=FG_DIM, font=self.font_chip, padx=4)
             widget.pack(side="left")
             widget.bind("<Button-1>", lambda e, i=index: self._set_filter(i))
             self.filter_labels.append(widget)
@@ -307,13 +313,14 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  type to search   Tab filter   ↑↓ move   Enter details / open map   Esc hide  ",
+            text="  type to search   Tab filter   ↑↓ move   Enter details / open map   F5 sync   Esc hide  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
         self._make_draggable(hint)
 
         self.root.bind("<Escape>", lambda e: self.hide())
+        self.root.bind("<F5>", self._sync)
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         self._set_filter(0)
         self.root.withdraw()
@@ -428,20 +435,113 @@ class Popover:
                 event = self.events.get_nowait()
                 if event == "toggle":
                     self.toggle()
+                elif isinstance(event, tuple):
+                    kind, payload = event
+                    if kind == "sync-status":
+                        self._sync_lines.append(str(payload))
+                        self._render_sync(done=False)
+                    elif kind == "sync-done":
+                        self._sync_finished()
+                    elif kind == "sync-failed":
+                        self._sync_finished(error=str(payload))
         except queue.Empty:
             pass
         self.root.after(60, self._pump)
 
     # --- filters -------------------------------------------------------
 
-    def _set_filter(self, index: int) -> str:
-        self.filter_index = index % len(self.filters)
+    # --- syncing -------------------------------------------------------
+
+    def _sync(self, event=None) -> str:
+        """Refresh TarkovTracker progress without leaving the overlay."""
+        if self._syncing:
+            return "break"
+        from . import tracker as tracker_mod
+
+        if not tracker_mod.load_token():
+            self._set_detail([
+                ("No TarkovTracker account connected.\n\n", "head"),
+                ("This is optional - everything else works without it.\n"
+                 "To connect one:\n\n", "dim"),
+                ("  uv run tarkov-tools tracker login --token PVP_xxxxx\n", "label"),
+            ])
+            return "break"
+
+        self._syncing = True
+        self._sync_lines = ["Syncing with TarkovTracker ...\n"]
+        self._render_sync(done=False)
+        threading.Thread(target=self._sync_worker, daemon=True).start()
+        return "break"
+
+    def _sync_worker(self) -> None:
+        """Runs off the main thread; talks to the UI only through the queue.
+
+        Opens its own database connection: SQLite connections belong to the
+        thread that created them, and the popover's belongs to the Tk thread.
+        """
+        from . import db as dbmod
+        from . import tracker as tracker_mod
+
+        try:
+            conn = dbmod.connect()
+            try:
+                with conn:
+                    tracker_mod.sync_needed(
+                        conn, verbose=False,
+                        on_status=lambda m: self.events.put(("sync-status", m)),
+                    )
+            finally:
+                conn.close()
+            self.events.put(("sync-done", None))
+        except Exception as exc:
+            self.events.put(("sync-failed", str(exc)))
+
+    def _render_sync(self, done: bool, error: str | None = None) -> None:
+        chunks: list[tuple[str, str]] = [
+            ("TarkovTracker sync\n\n", "head")
+        ]
+        for line in self._sync_lines:
+            chunks.append((line if line.endswith("\n") else line + "\n", "dim"))
+        if error:
+            chunks.append((f"\nfailed: {error}\n", "warn"))
+        elif done:
+            chunks.append(("\ndone - press Tab to the Needed filter\n", "good"))
+        self._set_detail(chunks)
+
+    def _sync_finished(self, error: str | None = None) -> None:
+        self._syncing = False
+        self._render_sync(done=error is None, error=error)
+        if error:
+            return
+        # A first successful sync makes the Needed filter available, so the
+        # chips are rebuilt rather than left stale.
+        self._rebuild_filter_bar()
+
+    def _rebuild_filter_bar(self) -> None:
+        current = self.filters[self.filter_index][0] if self.filters else "All"
+        self.filters = build_filters(self.conn)
+        for widget in self.filter_labels:
+            widget.destroy()
+        self.filter_labels = []
+        for index, (label, _kind, _side) in enumerate(self.filters):
+            widget = tk.Label(self.filter_bar, text=f" {label} ", bg=BG_ALT,
+                              fg=FG_DIM, font=self.font_chip, padx=4)
+            widget.pack(side="left")
+            widget.bind("<Button-1>", lambda e, i=index: self._set_filter(i))
+            self.filter_labels.append(widget)
+        names = [f[0] for f in self.filters]
+        self.filter_index = names.index(current) if current in names else 0
+        self._highlight_filters()
+
+    def _highlight_filters(self) -> None:
         for position, widget in enumerate(self.filter_labels):
             active = position == self.filter_index
-            widget.configure(
-                fg=BG if active else FG_DIM,
-                bg=ACCENT if active else BG_ALT,
-            )
+            widget.configure(fg=BG if active else FG_DIM,
+                             bg=ACCENT if active else BG_ALT)
+
+    def _set_filter(self, index: int) -> str:
+        self.filter_index = index % len(self.filters)
+        self._highlight_filters()
         self._on_type()
         return "break"
 

@@ -153,19 +153,28 @@ def ensure_schema(conn) -> None:
 
 
 def sync_needed(conn, token: str | None = None, game_mode: str | None = None,
-                verbose: bool = True) -> dict[str, int]:
+                verbose: bool = True, on_status=None) -> dict[str, int]:
     """Work out what you still need, and store it.
 
     Progress carries only ids and completion flags, so the outstanding items
     come from joining it against the public task and hideout definitions.
+
+    on_status, if given, is called with a short progress line at each stage -
+    the definition download is a few megabytes, so a caller with a UI needs
+    something to show meanwhile.
     """
+    def status(message: str) -> None:
+        if verbose:
+            print(message)
+        if on_status:
+            on_status(message)
+
     token = token or load_token()
     if not token:
         raise TrackerError("No TarkovTracker token saved. Run 'tracker login' first.")
 
     ensure_schema(conn)
-    if verbose:
-        print("fetching your progress ...")
+    status("fetching your progress ...")
     progress = get_progress(token)
     level = progress.get("playerLevel") or 0
     faction = (progress.get("pmcFaction") or "").upper()
@@ -180,9 +189,8 @@ def sync_needed(conn, token: str | None = None, game_mode: str | None = None,
                     if m.get("complete")}
     part_state = {p["id"]: p for p in progress.get("hideoutPartsProgress") or []}
 
-    if verbose:
-        print(f"  {progress.get('displayName')} - level {level}, {faction}")
-        print("fetching task and hideout definitions ...")
+    status(f"  {progress.get('displayName')} - level {level}, {faction}")
+    status("fetching task and hideout definitions ...")
     core = fetch_public("tasks-core", game_mode)
     objectives = fetch_public("tasks-objectives", game_mode)
     hideout = fetch_public("hideout", game_mode)
@@ -290,8 +298,7 @@ def sync_needed(conn, token: str | None = None, game_mode: str | None = None,
         )
     ]
     if missing:
-        if verbose:
-            print(f"  filling in {len(missing)} item names missing locally ...")
+        status(f"  filling in {len(missing)} item names missing locally ...")
         lite = fetch_public("items-lite", game_mode)
         by_id = {i["id"]: i for i in (lite.get("items") or [])}
         filled = 0
@@ -311,8 +318,7 @@ def sync_needed(conn, token: str | None = None, game_mode: str | None = None,
                  info.get("normalizedName"), info.get("wikiLink")),
             )
             filled += 1
-        if verbose:
-            print(f"  filled {filled}")
+        status(f"  filled {filled}")
         from . import db as dbmod
 
         dbmod.rebuild_fts(conn)
@@ -320,9 +326,8 @@ def sync_needed(conn, token: str | None = None, game_mode: str | None = None,
     distinct = conn.execute(
         "SELECT COUNT(DISTINCT item_id) FROM needed_items"
     ).fetchone()[0]
-    if verbose:
-        print(f"  {task_rows} task requirements, {hideout_rows} hideout requirements")
-        print(f"  {distinct} distinct items still needed")
+    status(f"  {task_rows} task requirements, {hideout_rows} hideout requirements")
+    status(f"  {distinct} distinct items still needed")
     return {"tasks": task_rows, "hideout": hideout_rows, "items": distinct}
 
 

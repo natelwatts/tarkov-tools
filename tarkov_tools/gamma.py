@@ -23,9 +23,22 @@ from .winapi import (
     get_gamma_ramp,
     list_displays,
     set_gamma_ramp,
+    toplevel_of,
+    window_class,
+    window_title,
 )
 
 DEFAULT_TARKOV_EXES = ("EscapeFromTarkov.exe",)
+
+# Windows belonging to this toolkit that should NOT count as "focus lost".
+# Opening the search popover moves focus away from the game, and without
+# this the gamma would flip back and forth every time you summoned it.
+#
+# Both the class and the title must match. Requiring the Tk class avoids a
+# false positive from, say, an Explorer window sitting on the repo folder,
+# which would otherwise be titled "tarkov-tools" too.
+DEFAULT_COMPANION_TITLES = ("Tarkov Tools",)
+DEFAULT_COMPANION_CLASSES = ("TkTopLevel",)
 
 # Windows clamps how far a gamma ramp may deviate from linear unless this
 # registry value is set to 256. Without it, SetDeviceGammaRamp refuses
@@ -102,11 +115,25 @@ class GammaController:
         self.contrast = contrast
         self.displays = displays or [name for name, _ in list_displays()]
         self._originals: dict[str, GammaRamp] = {}
+        self.stale_baseline: list[str] = []
+
+        # If a previous run died without restoring, the ramp we capture here
+        # would BE the boosted ramp - and "restoring" it later would leave the
+        # screen bright forever. Detect that by comparing against the ramp we
+        # are about to apply, and fall back to neutral for those displays.
+        target = build_ramp(gamma, brightness, contrast)
         for name in self.displays:
             try:
-                self._originals[name] = get_gamma_ramp(name)
+                current = get_gamma_ramp(name)
             except OSError:
                 self._originals[name] = build_ramp(1.0)
+                continue
+            if current[0][128] == target[0][128] and target[0][128] != 32896:
+                self.stale_baseline.append(name)
+                self._originals[name] = build_ramp(1.0)
+            else:
+                self._originals[name] = current
+
         self._applied_on: set[str] = set()
         atexit.register(self.restore)
 
@@ -122,12 +149,25 @@ class GammaController:
         return results
 
     def restore(self) -> dict[str, bool]:
+        """Put every touched display back, verifying the write actually took.
+
+        A stuck-bright screen is the worst failure mode this tool could have,
+        so the result is read back and retried rather than trusted.
+        """
         results: dict[str, bool] = {}
         for name in list(self._applied_on):
-            original = self._originals.get(name) or build_ramp(1.0)
-            ok = set_gamma_ramp(name, original)
+            original = self._originals.get(name)
+            neutral = build_ramp(1.0)
+            ok = set_gamma_ramp(name, original if original is not None else neutral)
+            if ok:
+                try:
+                    expected = (original if original is not None else neutral)[0][128]
+                    if get_gamma_ramp(name)[0][128] != expected:
+                        ok = set_gamma_ramp(name, neutral)
+                except OSError:
+                    pass
             if not ok:
-                ok = set_gamma_ramp(name, build_ramp(1.0))
+                ok = set_gamma_ramp(name, neutral)
             results[name] = ok
             self._applied_on.discard(name)
         return results
@@ -155,27 +195,47 @@ def install_signal_handlers(controller: GammaController) -> None:
             pass
 
 
+def is_companion_window(hwnd, titles, classes) -> bool:
+    """True if hwnd is one of our own tool windows.
+
+    Focus moving here should not be treated as leaving the game.
+    """
+    top = toplevel_of(hwnd)
+    return window_title(top) in titles and window_class(top) in classes
+
+
 def watch(
     gamma: float = 1.5,
     brightness: float = 0.0,
     contrast: float = 1.0,
     exes: tuple[str, ...] = DEFAULT_TARKOV_EXES,
-    poll_seconds: float = 1.0,
+    poll_seconds: float = 0.35,
     game_monitor_only: bool = True,
     displays: list[str] | None = None,
+    companion_titles: tuple[str, ...] = DEFAULT_COMPANION_TITLES,
+    companion_classes: tuple[str, ...] = DEFAULT_COMPANION_CLASSES,
+    revert_grace_seconds: float = 0.6,
     verbose: bool = True,
 ) -> None:
-    """Apply gamma whenever one of the watched executables has focus.
+    """Apply gamma whenever the game - or one of our own windows - has focus.
 
     Focus-triggered rather than launch-triggered, so the desktop is not left
     washed out while alt-tabbed to Discord or a browser.
 
-    game_monitor_only limits the change to the monitor the game window is on,
-    which matters on a multi-monitor setup.
+    Our own search popover counts as "still in game" so that summoning it does
+    not make the gamma flip back and forth. When it is focused, the gamma also
+    stays pinned to the monitor the *game* is on, not the popover's monitor.
+
+    revert_grace_seconds debounces any other brief focus change (an overlay
+    toast, a click-through) so a momentary blip does not strobe the screen.
     """
     targets = {e.lower() for e in exes}
+    companion_titles = tuple(companion_titles)
+    companion_classes = tuple(companion_classes)
     controller = GammaController(gamma, brightness, contrast, displays)
     install_signal_handlers(controller)
+    last_game_display: str | None = None
+    pending_revert_since: float | None = None
 
     if verbose:
         print(f"displays   : {', '.join(controller.displays)}")
@@ -183,6 +243,10 @@ def watch(
         print(f"settings   : gamma={gamma} brightness={brightness} contrast={contrast}")
         scope = "game monitor only" if game_monitor_only else "all displays"
         print(f"scope      : {scope}")
+        if controller.stale_baseline:
+            print(f"note       : {', '.join(controller.stale_baseline)} already had this "
+                  f"exact gamma applied\n             (leftover from a previous run?) - "
+                  f"will restore to neutral instead")
         # Windows' default clamp still allows moderate ramps - 1.5 applies
         # fine. Only mention the unlock when the request is big enough to
         # actually risk rejection.
@@ -200,27 +264,47 @@ def watch(
             hwnd = foreground_window()
             focused = (exe_name_for_window(hwnd) or "").lower()
             is_game = focused in targets
+            is_companion = (not is_game) and is_companion_window(
+                hwnd, companion_titles, companion_classes
+            )
 
-            if is_game:
+            if is_game or is_companion:
+                pending_revert_since = None
                 if game_monitor_only:
-                    mon = display_for_window(hwnd)
+                    if is_game:
+                        mon = display_for_window(hwnd)
+                        if mon in controller.displays:
+                            last_game_display = mon
+                    # While the popover is focused, keep the gamma where the
+                    # game is rather than following the popover's monitor.
+                    mon = last_game_display
                     wanted = [mon] if mon in controller.displays else controller.displays
                 else:
                     wanted = controller.displays
+
                 if controller.active_displays != set(wanted):
                     controller.restore()
                     results = controller.apply(wanted)
                     if verbose:
                         good = [d for d, ok in results.items() if ok]
                         bad = [d for d, ok in results.items() if not ok]
+                        who = focused if is_game else "search popover"
                         if good:
-                            print(f"[+] {focused} -> gamma {gamma} on {', '.join(good)}")
+                            print(f"[+] {who} -> gamma {gamma} on {', '.join(good)}")
                         if bad:
                             print(f"[!] rejected on {', '.join(bad)} (ramp clamped)")
+
             elif controller.active:
-                controller.restore()
-                if verbose:
-                    print("[-] focus lost -> gamma restored")
+                # Debounce: only revert once focus has been elsewhere for a
+                # continuous grace period.
+                now = time.monotonic()
+                if pending_revert_since is None:
+                    pending_revert_since = now
+                elif now - pending_revert_since >= revert_grace_seconds:
+                    controller.restore()
+                    pending_revert_since = None
+                    if verbose:
+                        print("[-] focus lost -> gamma restored")
 
             time.sleep(poll_seconds)
     finally:

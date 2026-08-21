@@ -20,9 +20,12 @@ from tkinter import font as tkfont
 from . import db as dbmod
 from . import search as searchmod
 from .config import load_config
+from .winapi import toplevel_of
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+
+WINDOW_TITLE = "Tarkov Tools"
 
 BG = "#14161a"
 BG_ALT = "#1b1e24"
@@ -36,26 +39,80 @@ SEL = "#2a3038"
 PEN_BANDS = [(20, "#8a5a5a"), (30, "#8a7a4a"), (37, "#7a8a4a"), (45, "#5a8a5a"), (999, "#4a8a7a")]
 
 
-def _force_foreground(hwnd: int) -> None:
-    """Bring a window to the front even when another app owns the foreground.
+SW_SHOW = 5
+SW_RESTORE = 9
+SPI_GETFOREGROUNDLOCKTIMEOUT = 0x2000
+SPI_SETFOREGROUNDLOCKTIMEOUT = 0x2001
+SPIF_SENDCHANGE = 0x02
+ASFW_ANY = -1
 
-    Windows blocks a background process from stealing focus unless its input
-    thread is attached to the current foreground thread, hence the dance.
+
+def _force_foreground(hwnd: int) -> bool:
+    """Bring a window to the front, even over a focused fullscreen game.
+
+    Windows only lets a process call SetForegroundWindow when it "owns" the
+    foreground - which includes the case where it registered the hotkey the
+    user just pressed. That covers normal use. The extra steps here are for
+    the cases where it does not: attaching our input thread to the current
+    foreground thread, and briefly zeroing the foreground lock timeout.
     """
+    if not hwnd:
+        return False
     try:
-        fg = user32.GetForegroundWindow()
-        if not fg or fg == hwnd:
-            user32.SetForegroundWindow(hwnd)
-            return
-        target_tid = user32.GetWindowThreadProcessId(fg, None)
-        our_tid = kernel32.GetCurrentThreadId()
-        attached = user32.AttachThreadInput(target_tid, our_tid, True)
-        user32.SetForegroundWindow(hwnd)
+        user32.ShowWindow(hwnd, SW_SHOW)
         user32.BringWindowToTop(hwnd)
-        if attached:
-            user32.AttachThreadInput(target_tid, our_tid, False)
+
+        fg = user32.GetForegroundWindow()
+        if fg == hwnd:
+            return True
+
+        try:
+            user32.AllowSetForegroundWindow(ASFW_ANY)
+        except Exception:
+            pass
+
+        if user32.SetForegroundWindow(hwnd):
+            return True
+
+        # Attach to the foreground thread's input queue so we are considered
+        # part of it, then try again.
+        attached = False
+        target_tid = 0
+        our_tid = kernel32.GetCurrentThreadId()
+        if fg:
+            target_tid = user32.GetWindowThreadProcessId(fg, None)
+            if target_tid and target_tid != our_tid:
+                attached = bool(user32.AttachThreadInput(target_tid, our_tid, True))
+        try:
+            user32.SetForegroundWindow(hwnd)
+            user32.SetActiveWindow(hwnd)
+            user32.SetFocus(hwnd)
+        finally:
+            if attached:
+                user32.AttachThreadInput(target_tid, our_tid, False)
+
+        if user32.GetForegroundWindow() == hwnd:
+            return True
+
+        # Last resort: drop the foreground lock timeout, retry, put it back.
+        previous = wintypes.UINT(0)
+        if user32.SystemParametersInfoW(
+            SPI_GETFOREGROUNDLOCKTIMEOUT, 0, ctypes.byref(previous), 0
+        ):
+            user32.SystemParametersInfoW(
+                SPI_SETFOREGROUNDLOCKTIMEOUT, 0, ctypes.c_void_p(0), SPIF_SENDCHANGE
+            )
+            user32.SetForegroundWindow(hwnd)
+            user32.SystemParametersInfoW(
+                SPI_SETFOREGROUNDLOCKTIMEOUT,
+                0,
+                ctypes.c_void_p(previous.value),
+                SPIF_SENDCHANGE,
+            )
+
+        return user32.GetForegroundWindow() == hwnd
     except Exception:
-        pass
+        return False
 
 
 def _fmt_price(value) -> str:
@@ -84,7 +141,10 @@ class Popover:
 
     def _build(self) -> None:
         self.root = tk.Tk()
-        self.root.title("Tarkov Tools")
+        # The gamma watcher identifies this window by title + class so that
+        # summoning the popover does not read as "focus left the game".
+        # Keep this string in sync with gamma.DEFAULT_COMPANION_TITLES.
+        self.root.title(WINDOW_TITLE)
         self.root.configure(bg=BG)
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
@@ -164,7 +224,10 @@ class Popover:
         self.root.lift()
         self.root.attributes("-topmost", True)
         self.root.update_idletasks()
-        _force_foreground(self.root.winfo_id())
+        # winfo_id() is a TkChild with no title; the window Windows actually
+        # focuses (and that the gamma watcher identifies by title) is its
+        # GA_ROOT ancestor.
+        _force_foreground(toplevel_of(self.root.winfo_id()))
         self.entry.focus_force()
         self.entry.select_range(0, "end")
 

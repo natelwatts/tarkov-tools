@@ -6,8 +6,15 @@
     "exes": [
       "EscapeFromTarkov.exe"
     ],
-    "poll_seconds": 1.0,
-    "game_monitor_only": true
+    "poll_seconds": 0.35,
+    "game_monitor_only": true,
+    "companion_titles": [
+      "Tarkov Tools"
+    ],
+    "companion_classes": [
+      "TkTopLevel"
+    ],
+    "revert_grace_seconds": 0.6
   },
   "api": {
     "endpoint": "https://api.tarkov.dev/graphql",
@@ -21,7 +28,7 @@
     "locale_url": "https://raw.githubusercontent.com/paulov-t/Paulov.Tarkov.Db/master/database/locales/global/en.json"
   },
   "search": {
-    "hotkey": "ctrl+alt+t",
+    "hotkey": "ctrl+k",
     "max_results": 40
   }
 }

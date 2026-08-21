@@ -80,6 +80,9 @@ def _cmd_gamma(args: argparse.Namespace) -> int:
         exes=tuple(cfg["exes"]),
         poll_seconds=cfg["poll_seconds"],
         game_monitor_only=cfg["game_monitor_only"] and not args.all_displays,
+        companion_titles=tuple(cfg.get("companion_titles") or ()),
+        companion_classes=tuple(cfg.get("companion_classes") or ()),
+        revert_grace_seconds=cfg.get("revert_grace_seconds", 0.6),
     )
     return 0
 

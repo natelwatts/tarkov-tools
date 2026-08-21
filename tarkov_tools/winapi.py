@@ -150,6 +150,44 @@ kernel32.QueryFullProcessImageNameW.argtypes = [
 kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
 
 
+GA_ROOT = 2
+
+user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetWindowTextW.restype = ctypes.c_int
+user32.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+user32.GetClassNameW.restype = ctypes.c_int
+user32.GetAncestor.argtypes = [wintypes.HWND, ctypes.c_uint]
+user32.GetAncestor.restype = wintypes.HWND
+
+
+def toplevel_of(hwnd):
+    """The real top-level window for a handle.
+
+    Tk's winfo_id() hands back a TkChild whose title is empty; the titled
+    window is its GA_ROOT ancestor. Anything that needs a title, a class, or
+    SetForegroundWindow must use this rather than the raw handle.
+    """
+    if not hwnd:
+        return hwnd
+    return user32.GetAncestor(hwnd, GA_ROOT) or hwnd
+
+
+def window_title(hwnd) -> str:
+    if not hwnd:
+        return ""
+    buf = ctypes.create_unicode_buffer(512)
+    user32.GetWindowTextW(hwnd, buf, 512)
+    return buf.value
+
+
+def window_class(hwnd) -> str:
+    if not hwnd:
+        return ""
+    buf = ctypes.create_unicode_buffer(512)
+    user32.GetClassNameW(hwnd, buf, 512)
+    return buf.value
+
+
 def foreground_window():
     return user32.GetForegroundWindow()
 

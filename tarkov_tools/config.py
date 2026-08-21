@@ -22,8 +22,12 @@ DEFAULTS: dict[str, Any] = {
         "brightness": 0.0,
         "contrast": 1.0,
         "exes": ["EscapeFromTarkov.exe"],
-        "poll_seconds": 1.0,
+        "poll_seconds": 0.35,
         "game_monitor_only": True,
+        # Our own windows that should not count as "focus left the game".
+        "companion_titles": ["Tarkov Tools"],
+        "companion_classes": ["TkTopLevel"],
+        "revert_grace_seconds": 0.6,
     },
     "api": {
         "endpoint": "https://api.tarkov.dev/graphql",
@@ -45,7 +49,7 @@ DEFAULTS: dict[str, Any] = {
         ),
     },
     "search": {
-        "hotkey": "ctrl+alt+t",
+        "hotkey": "ctrl+k",
         "max_results": 40,
     },
 }

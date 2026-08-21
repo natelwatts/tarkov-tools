@@ -32,6 +32,36 @@ _MODIFIER_NAMES = {
     "super": MOD_WIN,
 }
 
+# RegisterHotKey's MOD_* flags are side-agnostic: MOD_CONTROL matches either
+# Ctrl and there is no MOD_RCONTROL. Distinguishing sides normally means a
+# low-level keyboard hook, which would observe every keystroke on the system.
+#
+# Instead, a side-specific prefix registers the ordinary side-agnostic hotkey
+# and then checks GetAsyncKeyState for that one key when the hotkey fires.
+# That reads a single key's state at the moment we were already notified -
+# it never observes typing, and installs no hook.
+VK_LCONTROL, VK_RCONTROL = 0xA2, 0xA3
+VK_LSHIFT, VK_RSHIFT = 0xA0, 0xA1
+VK_LMENU, VK_RMENU = 0xA4, 0xA5
+
+_SIDED_MODIFIERS = {
+    "lctrl": (MOD_CONTROL, VK_LCONTROL),
+    "rctrl": (MOD_CONTROL, VK_RCONTROL),
+    "lcontrol": (MOD_CONTROL, VK_LCONTROL),
+    "rcontrol": (MOD_CONTROL, VK_RCONTROL),
+    "lshift": (MOD_SHIFT, VK_LSHIFT),
+    "rshift": (MOD_SHIFT, VK_RSHIFT),
+    "lalt": (MOD_ALT, VK_LMENU),
+    "ralt": (MOD_ALT, VK_RMENU),
+}
+
+user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+user32.GetAsyncKeyState.restype = ctypes.c_short
+
+
+def _key_is_down(vk: int) -> bool:
+    return bool(user32.GetAsyncKeyState(vk) & 0x8000)
+
 # Virtual key codes for names that are not a single character.
 _VK_NAMES = {
     "space": 0x20, "enter": 0x0D, "return": 0x0D, "tab": 0x09,
@@ -61,16 +91,26 @@ class HotkeyError(RuntimeError):
     pass
 
 
-def parse_hotkey(spec: str) -> tuple[int, int]:
-    """Turn something like 'ctrl+alt+t' into (modifiers, virtual key code)."""
+def parse_hotkey(spec: str) -> tuple[int, int, tuple[int, ...]]:
+    """Turn 'ctrl+shift+t' into (modifiers, virtual key, required_side_keys).
+
+    Prefix a modifier with l/r to demand that specific side, e.g.
+    'rctrl+shift+t' fires only on the RIGHT Ctrl. Those become entries in
+    required_side_keys, checked when the hotkey fires.
+    """
     parts = [p.strip().lower() for p in (spec or "").split("+") if p.strip()]
     if not parts:
         raise HotkeyError("empty hotkey specification")
 
     modifiers = 0
+    sides: list[int] = []
     key: str | None = None
     for part in parts:
-        if part in _MODIFIER_NAMES:
+        if part in _SIDED_MODIFIERS:
+            flag, vk_side = _SIDED_MODIFIERS[part]
+            modifiers |= flag
+            sides.append(vk_side)
+        elif part in _MODIFIER_NAMES:
             modifiers |= _MODIFIER_NAMES[part]
         else:
             key = part
@@ -85,7 +125,7 @@ def parse_hotkey(spec: str) -> tuple[int, int]:
     else:
         raise HotkeyError(f"unrecognised key {key!r} in hotkey {spec!r}")
 
-    return modifiers | MOD_NOREPEAT, vk
+    return modifiers | MOD_NOREPEAT, vk, tuple(sides)
 
 
 class HotkeyListener:
@@ -98,7 +138,7 @@ class HotkeyListener:
     def __init__(self, spec: str, callback):
         self.spec = spec
         self.callback = callback
-        self.modifiers, self.vk = parse_hotkey(spec)
+        self.modifiers, self.vk, self.required_sides = parse_hotkey(spec)
         self._thread: threading.Thread | None = None
         self._thread_id: int | None = None
         self._ready = threading.Event()
@@ -121,6 +161,10 @@ class HotkeyListener:
                 if result in (0, -1):
                     break
                 if msg.message == WM_HOTKEY:
+                    # For a side-specific spec (rctrl+...), confirm that side
+                    # is the one actually held before acting.
+                    if any(not _key_is_down(vk) for vk in self.required_sides):
+                        continue
                     try:
                         self.callback()
                     except Exception as exc:  # keep the loop alive

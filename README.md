@@ -18,6 +18,7 @@ Nothing here reads, writes, or attaches to the game process.
 | Database | HTTP requests to a public API or a published template dump, cached into local SQLite. Read-only, and never during a raid. |
 | Popover | An ordinary always-on-top window, like Notepad. No injection, no graphics-API hooking. |
 | Hotkey | `RegisterHotKey`, which asks Windows to route one specific combination to us. Not a keyboard hook - it cannot see any other keystroke. |
+| Focus | Reads the foreground window's title/class and executable *name* only, to know whether the game is in front. |
 
 There is no DLL injection, no `Present`/`vkQueuePresentKHR` hooking, and no
 handle opened against the game beyond `PROCESS_QUERY_LIMITED_INFORMATION` to
@@ -112,8 +113,22 @@ python -m tarkov_tools.cli ammo --list-calibers
 python -m tarkov_tools.cli popover
 ```
 
-Press **Ctrl+Alt+T** (configurable) any time - including in game - and a search
+Press **Ctrl+K** (configurable) any time - including in game - and a search
 box appears. Type, arrow through results, Esc to dismiss.
+
+The gamma watcher recognises this window by title *and* window class, so
+summoning the popover does not read as "you left the game": the gamma stays
+applied, and stays on the monitor the **game** is on rather than following
+the popover.
+
+> A registered hotkey is claimed system-wide, so while the popover is running
+> **Ctrl+K stops reaching other applications** (Chrome's address bar, VS Code
+> chords, Slack quick-switch). Change `search.hotkey` in `config.json` if that
+> bites - `ctrl+alt+k` and `ctrl+shift+space` are far less contested.
+>
+> Modifiers can be side-specific: `rctrl+k` fires only on the RIGHT Ctrl.
+> That is done by checking one key's state when the hotkey fires, not by
+> installing a keyboard hook.
 
 - Search a **gun** → every compatible round sorted by penetration, every
   magazine that fits sorted by capacity, and which traders sell it
@@ -204,7 +219,7 @@ python -m tarkov_tools.cli sync --cache
   "gamma":  { "value": 1.5, "exes": ["EscapeFromTarkov.exe"],
               "game_monitor_only": true },
   "api":    { "game_mode": "regular" },      // or "pve" - prices differ
-  "search": { "hotkey": "ctrl+alt+t" }
+  "search": { "hotkey": "ctrl+k" }
 }
 ```
 

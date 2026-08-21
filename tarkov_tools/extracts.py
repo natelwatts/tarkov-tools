@@ -54,7 +54,25 @@ LOCATIONS: dict[str, tuple[str, str]] = {
     "sandbox_high": ("Ground Zero (high)", "Ground_Zero"),
     "shoreline": ("Shoreline", "Shoreline"),
     "tarkovstreets": ("Streets of Tarkov", "Streets_of_Tarkov"),
+    "terminal": ("Terminal", "Terminal"),
     "woods": ("Woods", "Woods"),
+}
+
+# Maps the template mirror has no allExtracts.json for. Their extracts are
+# taken from the wiki's own map markers instead, which gives the name, side
+# and marker link but none of the game-file detail (chance, timers, rules).
+WIKI_ONLY_MAPS: dict[str, tuple[str, str]] = {
+    "icebreaker": ("Icebreaker", "Icebreaker"),
+    "terminal": ("Terminal", "Terminal"),
+}
+
+# Wiki marker categories -> the game's Side values.
+CATEGORY_SIDES = {
+    "exfil_pmc": "Pmc",
+    "exfil_scav": "Scav",
+    "exfil_shared": "Coop",
+    "exfil_coop": "Coop",
+    "transit": "Transit",
 }
 
 SCHEMA = """
@@ -263,18 +281,18 @@ def _parse_markers(html: str) -> list[dict]:
     return []
 
 
-def fetch_map_markers(wiki_page: str) -> dict[str, str]:
-    """Return {marker title: marker id} for a Map: page.
+def fetch_marker_records(wiki_page: str) -> list[dict]:
+    """[{title, id, category}] for a Map: page's extraction/transit markers.
 
-    The id is what ?marker= takes. Only extraction and transit categories are
-    kept, so loot and spawn markers cannot shadow an extract of the same name.
+    Only exfil and transit categories are kept, so a loot or spawn marker
+    cannot shadow an extract that happens to share its name.
     """
     url = f"{WIKI_BASE}Map:{wiki_page}"
     request = urllib.request.Request(url, headers={"User-Agent": BROWSER_UA})
     with urllib.request.urlopen(request, timeout=60) as response:
         html = response.read().decode("utf-8", "replace")
 
-    out: dict[str, str] = {}
+    out: list[dict] = []
     for marker in _parse_markers(html):
         category = str(marker.get("categoryId") or "")
         if not category.startswith(("exfil", "transit")):
@@ -282,8 +300,59 @@ def fetch_map_markers(wiki_page: str) -> dict[str, str]:
         title = ((marker.get("popup") or {}).get("title") or "").strip()
         marker_id = marker.get("id")
         if title and marker_id is not None:
-            out.setdefault(title, str(marker_id))
+            out.append({"title": title, "id": str(marker_id), "category": category})
     return out
+
+
+def fetch_map_markers(wiki_page: str) -> dict[str, str]:
+    """{marker title: marker id} - the id is what ?marker= takes."""
+    out: dict[str, str] = {}
+    for record in fetch_marker_records(wiki_page):
+        out.setdefault(record["title"], record["id"])
+    return out
+
+
+def import_wiki_only_maps(conn, verbose: bool = True) -> int:
+    """Add extracts for maps the template mirror does not cover.
+
+    These carry name, side and marker link only - the game-file detail simply
+    is not available for them from this source.
+    """
+    ensure_schema(conn)
+    total = 0
+    for map_id, (map_name, wiki_page) in WIKI_ONLY_MAPS.items():
+        existing = conn.execute(
+            "SELECT COUNT(*) FROM extracts WHERE map_id = ?", (map_id,)
+        ).fetchone()[0]
+        if existing:
+            continue  # real game data already imported for this map
+        try:
+            records = fetch_marker_records(wiki_page)
+        except Exception as exc:
+            if verbose:
+                print(f"  {map_name:20} skipped ({exc})")
+            continue
+        for record in records:
+            side = CATEGORY_SIDES.get(record["category"], "Pmc")
+            name = record["title"]
+            conn.execute(
+                """
+                INSERT INTO extracts (map_id, map_name, wiki_page, name, display_name,
+                    side, marker_id, search_key)
+                VALUES (?,?,?,?,?,?,?,?)
+                ON CONFLICT(map_id, name, side) DO UPDATE SET
+                    marker_id=excluded.marker_id, search_key=excluded.search_key
+                """,
+                (
+                    map_id, map_name, wiki_page, name, name, side, record["id"],
+                    _match_key(name) + "|" + _match_key(name) + "|" + _match_key(map_name),
+                ),
+            )
+            total += 1
+        if verbose:
+            print(f"  {map_name:20} {len(records):>3} extracts (from wiki markers)")
+        time.sleep(1.5)
+    return total
 
 
 def search(conn, term: str, limit: int = 25) -> list[dict]:
@@ -363,6 +432,30 @@ def wiki_url(extract: dict) -> str:
     if marker_id:
         return f"{WIKI_BASE}Map:{page}?marker={urllib.parse.quote(str(marker_id))}"
     return f"{WIKI_BASE}Map:{page}"
+
+
+def apply_map_filters(wiki_page: str, wanted=None, verbose: bool = False) -> bool:
+    """Hide every map category except the ones worth seeing.
+
+    Best effort: the map exposes no filter URL parameter, so this drives its
+    sidebar. Any failure just leaves the map unfiltered.
+    """
+    try:
+        from .browser_tabs import _window_text, chrome_windows
+        from .map_filters import DEFAULT_WANTED, apply_filters
+
+        wanted = tuple(tuple(pair) for pair in (wanted or DEFAULT_WANTED))
+        needle = f"Map:{wiki_page}".lower()
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            for hwnd in chrome_windows():
+                if needle in (_window_text(hwnd) or "").lower():
+                    return apply_filters(hwnd, wanted=wanted, verbose=verbose)
+            time.sleep(0.6)
+    except Exception as exc:
+        if verbose:
+            print(f"  map filters skipped: {exc}")
+    return False
 
 
 def find_chrome() -> str | None:

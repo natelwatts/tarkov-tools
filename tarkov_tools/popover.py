@@ -438,7 +438,12 @@ class Popover:
         self.hide()
         self.root.update_idletasks()
         try:
-            extracts_mod.open_in_browser(url, reuse_title=reuse)
+            opened, _ = extracts_mod.open_in_browser(url, reuse_title=reuse)
+            cfg = load_config().get("extracts", {})
+            if opened and cfg.get("apply_map_filters", True) and extract.get("wiki_page"):
+                extracts_mod.apply_map_filters(
+                    extract["wiki_page"], cfg.get("categories")
+                )
         except Exception as exc:
             print(f"could not open the map: {exc}")
 

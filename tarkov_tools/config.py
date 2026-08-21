@@ -48,6 +48,17 @@ DEFAULTS: dict[str, Any] = {
             "/database/locales/global/en.json"
         ),
     },
+    "extracts": {
+        # After the wiki map opens, hide every category except these.
+        # The map has no filter URL parameter, so its sidebar is clicked;
+        # set this false to leave the map exactly as the wiki renders it.
+        "apply_map_filters": True,
+        "categories": [
+            ["Extractions", "PMC"],
+            ["Extractions", "Scav"],
+            ["Spawns", "PMC"],
+        ],
+    },
     "search": {
         "hotkey": "ctrl+t",
         "max_results": 40,

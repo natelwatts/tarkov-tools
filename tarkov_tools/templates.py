@@ -375,5 +375,7 @@ def run_import(items_path: Path | None = None,
         counts["extracts"] = ex.import_extracts(
             conn, locale=locale, markers=markers, verbose=verbose
         )
+        if do_download:
+            counts["extracts"] += ex.import_wiki_only_maps(conn, verbose=verbose)
     conn.close()
     return counts

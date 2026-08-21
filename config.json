@@ -27,6 +27,23 @@
     "items_url": "https://raw.githubusercontent.com/paulov-t/Paulov.Tarkov.Db/master/database/templates/items.json",
     "locale_url": "https://raw.githubusercontent.com/paulov-t/Paulov.Tarkov.Db/master/database/locales/global/en.json"
   },
+  "extracts": {
+    "apply_map_filters": true,
+    "categories": [
+      [
+        "Extractions",
+        "PMC"
+      ],
+      [
+        "Extractions",
+        "Scav"
+      ],
+      [
+        "Spawns",
+        "PMC"
+      ]
+    ]
+  },
   "search": {
     "hotkey": "ctrl+t",
     "max_results": 40,

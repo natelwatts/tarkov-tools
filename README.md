@@ -55,6 +55,7 @@ your gamma. `scripts	arkov-tools.cmd` does the same by double-click.
 | `uv run tarkov-tools popover` | popover only |
 | `uv run tarkov-tools search m995` | one-off lookup in the terminal |
 | `uv run tarkov-tools ammo` | penetration chart |
+| `uv run tarkov-tools hotkey ctrl+alt+k` | rebind the popover hotkey |
 | `uv run tarkov-tools import-templates --download` | rebuild the database |
 
 ---
@@ -141,7 +142,7 @@ uv run tarkov-tools ammo --list-calibers
 uv run tarkov-tools popover
 ```
 
-Press **Ctrl+K** (configurable) any time - including in game - and a search
+Press **Ctrl+T** (configurable) any time - including in game - and a search
 box appears. Type, arrow through results, Esc to dismiss.
 
 The gamma watcher recognises this window by title *and* window class, so
@@ -149,14 +150,29 @@ summoning the popover does not read as "you left the game": the gamma stays
 applied, and stays on the monitor the **game** is on rather than following
 the popover.
 
+#### Rebinding
+
+```powershell
+uv run tarkov-tools hotkey                  # show the current binding
+uv run tarkov-tools hotkey ctrl+alt+k       # change it
+```
+
+The new combination is registered for real before it is saved, so a clash
+with another application is reported immediately rather than silently
+failing the next time the popover starts. The setting is written to
+`config.local.json`, which is gitignored, so personal bindings are never
+committed and survive updates to the shipped defaults.
+
+Accepted forms: `ctrl+t`, `ctrl + t`, `f9`, `ctrl+shift+space`, `win+k`.
+Modifiers may be side-specific - `rctrl+t` fires only on the RIGHT Ctrl,
+done by checking that one key's state when the hotkey fires rather than by
+installing a keyboard hook. `--hotkey` overrides for a single run without
+saving.
+
 > A registered hotkey is claimed system-wide, so while the popover is running
-> **Ctrl+K stops reaching other applications** (Chrome's address bar, VS Code
-> chords, Slack quick-switch). Change `search.hotkey` in `config.json` if that
-> bites - `ctrl+alt+k` and `ctrl+shift+space` are far less contested.
->
-> Modifiers can be side-specific: `rctrl+k` fires only on the RIGHT Ctrl.
-> That is done by checking one key's state when the hotkey fires, not by
-> installing a keyboard hook.
+> **the combination stops reaching other applications**. Ctrl+T is "new tab"
+> in every browser, so expect that to stop working until you exit. `ctrl+alt+t`
+> or `ctrl+shift+space` are far less contested if that becomes annoying.
 
 - Search a **gun** → every compatible round sorted by penetration, every
   magazine that fits sorted by capacity, and which traders sell it
@@ -247,7 +263,7 @@ uv run tarkov-tools sync --cache
   "gamma":  { "value": 1.5, "exes": ["EscapeFromTarkov.exe"],
               "game_monitor_only": true },
   "api":    { "game_mode": "regular" },      // or "pve" - prices differ
-  "search": { "hotkey": "ctrl+k" }
+  "search": { "hotkey": "ctrl+t" }
 }
 ```
 

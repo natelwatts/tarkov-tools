@@ -13,6 +13,7 @@
   uv run tarkov-tools search m995      look something up in the terminal
   uv run tarkov-tools ammo             penetration chart by caliber
   uv run tarkov-tools popover          search popover only
+  uv run tarkov-tools hotkey ctrl+t    rebind the popover hotkey
 
 'tt' is a shorter alias for 'tarkov-tools'.
 """
@@ -227,6 +228,61 @@ def _cmd_popover(args: argparse.Namespace) -> int:
     return popover_main(args.hotkey)
 
 
+def _cmd_hotkey(args: argparse.Namespace) -> int:
+    """Show or change the popover hotkey."""
+    from .config import LOCAL_CONFIG_PATH, set_local_override
+    from .hotkey import HotkeyError, HotkeyListener, parse_hotkey
+
+    current = load_config()["search"]["hotkey"]
+
+    if not args.spec:
+        print(f"current hotkey: {current}")
+        print("\nchange it with:  uv run tarkov-tools hotkey <combo>")
+        print("examples:        ctrl+t   ctrl+alt+k   ctrl+shift+space   rctrl+t   f9")
+        print("\nA registered hotkey is claimed system-wide, so whatever you pick")
+        print("stops reaching other applications while the popover is running.")
+        return 0
+
+    # Accept "ctrl+t", "ctrl + t" and "ctrl", "+", "t" alike, and store the
+    # canonical form rather than whatever separators the shell handed over.
+    parts = [
+        part
+        for chunk in args.spec
+        for part in chunk.lower().replace(" ", "").split("+")
+        if part
+    ]
+    spec = "+".join(parts)
+    if not spec:
+        print("no hotkey given", file=sys.stderr)
+        return 1
+
+    try:
+        parse_hotkey(spec)
+    except HotkeyError as exc:
+        print(f"invalid hotkey: {exc}", file=sys.stderr)
+        return 1
+
+    # Actually claim it before saving, so a clash with another application
+    # is reported now rather than the next time the popover starts.
+    try:
+        listener = HotkeyListener(spec, lambda: None)
+        listener.start()
+        listener.stop()
+    except HotkeyError as exc:
+        print(f"cannot use {spec!r}: {exc}", file=sys.stderr)
+        print("Pick a different combination.", file=sys.stderr)
+        return 1
+
+    path = set_local_override("search", "hotkey", spec)
+    print(f"hotkey: {current} -> {spec}")
+    print(f"saved to {path.name}")
+    if load_config()["search"]["hotkey"] != spec:
+        print("warning: config did not take effect", file=sys.stderr)
+        return 1
+    print("\nRestart the popover for it to take effect.")
+    return 0
+
+
 def _cmd_start(args: argparse.Namespace) -> int:
     """Run the gamma watcher and the search popover together.
 
@@ -319,6 +375,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("popover", help="hotkey-summoned search window")
     p.add_argument("--hotkey", default=None, help="override the configured hotkey")
     p.set_defaults(func=_cmd_popover)
+
+    hk = sub.add_parser("hotkey", help="show or change the popover hotkey")
+    hk.add_argument("spec", nargs="*", help="e.g. ctrl+t (omit to show the current one)")
+    hk.set_defaults(func=_cmd_hotkey)
 
     st = sub.add_parser(
         "start", help="run the gamma watcher and the search popover together (default)"

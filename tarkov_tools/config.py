@@ -49,7 +49,7 @@ DEFAULTS: dict[str, Any] = {
         ),
     },
     "search": {
-        "hotkey": "ctrl+k",
+        "hotkey": "ctrl+t",
         "max_results": 40,
     },
 }
@@ -80,3 +80,23 @@ def write_default_config() -> Path:
     if not CONFIG_PATH.exists():
         CONFIG_PATH.write_text(json.dumps(DEFAULTS, indent=2) + "\n", encoding="utf-8")
     return CONFIG_PATH
+
+
+def set_local_override(section: str, key: str, value: Any) -> Path:
+    """Persist one setting to config.local.json.
+
+    Overrides live in the local file rather than config.json so that personal
+    settings are not committed and are never clobbered by an update to the
+    shipped defaults.
+    """
+    current: dict[str, Any] = {}
+    if LOCAL_CONFIG_PATH.exists():
+        try:
+            current = json.loads(LOCAL_CONFIG_PATH.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise SystemExit(
+                f"{LOCAL_CONFIG_PATH.name} is not valid JSON: {exc}"
+            ) from exc
+    current.setdefault(section, {})[key] = value
+    LOCAL_CONFIG_PATH.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
+    return LOCAL_CONFIG_PATH

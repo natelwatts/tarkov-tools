@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import argparse
 import os
-import textwrap
 import sys
+import textwrap
 
 from .config import load_config, write_default_config
 
@@ -124,6 +124,23 @@ def _cmd_import_templates(args: argparse.Namespace) -> int:
     return 0
 
 
+BUILD_HINT = ("The item database is empty. Build it with:\n"
+              "  uv run tarkov-tools import-templates --download")
+
+
+def _database_is_empty(conn) -> bool:
+    """True when nothing has been imported yet.
+
+    Worth distinguishing from a genuine miss: on a fresh clone every lookup
+    returns nothing, and "no matches" reads like the tool is broken rather
+    than like a step was skipped.
+    """
+    try:
+        return not conn.execute("SELECT 1 FROM items LIMIT 1").fetchone()
+    except Exception:
+        return True
+
+
 def _cmd_search(args: argparse.Namespace) -> int:
     from . import db as dbmod
     from . import search as searchmod
@@ -132,7 +149,8 @@ def _cmd_search(args: argparse.Namespace) -> int:
     term = " ".join(args.term)
     results = searchmod.search(conn, term, load_config()["search"]["max_results"])
     if not results:
-        print(f"no matches for {term!r}")
+        print(BUILD_HINT if _database_is_empty(conn) else f"no matches for {term!r}")
+        conn.close()
         return 1
 
     if args.list:
@@ -229,7 +247,8 @@ def _cmd_ammo(args: argparse.Namespace) -> int:
 
     rows = searchmod.ammo_chart(conn, args.caliber)
     if not rows:
-        print("no ammo found - run 'sync' first, or check the caliber name")
+        print(BUILD_HINT if _database_is_empty(conn)
+              else "no ammo found - check the caliber name")
         return 1
 
     current = None

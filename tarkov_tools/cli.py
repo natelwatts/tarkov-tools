@@ -13,6 +13,7 @@
   uv run tarkov-tools search m995      look something up in the terminal
   uv run tarkov-tools ammo             penetration chart by caliber
   uv run tarkov-tools popover          search popover only
+  uv run tarkov-tools extract zb-1011  open the wiki map, extract highlighted
   uv run tarkov-tools hotkey ctrl+t    rebind the popover hotkey
 
 'tt' is a shorter alias for 'tarkov-tools'.
@@ -228,6 +229,56 @@ def _cmd_popover(args: argparse.Namespace) -> int:
     return popover_main(args.hotkey)
 
 
+def _cmd_extract(args: argparse.Namespace) -> int:
+    """Look up an extraction point and open the wiki with it highlighted."""
+    from . import db as dbmod
+    from . import extracts as ex
+
+    conn = dbmod.connect()
+    term = " ".join(args.name)
+    matches = ex.search(conn, term)
+    if not matches:
+        print(f"no extract matching {term!r}")
+        print("Run 'uv run tarkov-tools import-templates --download' if the "
+              "database has no extract data yet.")
+        conn.close()
+        return 1
+
+    best = matches[0]
+    side = (best.get("side") or "").replace("Pmc", "PMC").replace("Coop", "Co-op")
+    print(f"\n{best['display_name']}   [{best['map_name']}]")
+    print(f"  side          {side or '-'}")
+    if best.get("chance") is not None:
+        print(f"  chance        {best['chance']:.0f}%")
+    if best.get("exfil_time"):
+        print(f"  exfil time    {best['exfil_time']}s")
+    requirement = best.get("requirement")
+    if requirement and requirement != "None":
+        tip = best.get("requirement_tip")
+        print(f"  requirement   {requirement}{f'  ({tip})' if tip else ''}")
+    if best.get("entry_points"):
+        print(f"  spawns        {best['entry_points']}")
+
+    others = [m for m in matches[1:] if m["display_name"] != best["display_name"]]
+    if others:
+        print("\n  also matched: " + ", ".join(
+            f"{m['display_name']} ({m['map_name']})" for m in others[:6]))
+
+    url = ex.wiki_url(best)
+    print(f"\n  {url}")
+
+    if args.no_open:
+        conn.close()
+        return 0
+
+    # Prefer an already-open tab for the same map over another duplicate.
+    reuse_title = f"Map:{best.get('wiki_page')}" if best.get("wiki_page") else None
+    opened, how = ex.open_in_browser(url, reuse_title=reuse_title)
+    print(f"  {'opened in ' + how if opened else how}")
+    conn.close()
+    return 0 if opened else 1
+
+
 def _cmd_hotkey(args: argparse.Namespace) -> int:
     """Show or change the popover hotkey."""
     from .config import LOCAL_CONFIG_PATH, set_local_override
@@ -375,6 +426,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("popover", help="hotkey-summoned search window")
     p.add_argument("--hotkey", default=None, help="override the configured hotkey")
     p.set_defaults(func=_cmd_popover)
+
+    e = sub.add_parser(
+        "extract", help="look up an extract and open the wiki map with it highlighted"
+    )
+    e.add_argument("name", nargs="+", help="extract name, e.g. 'zb-1011'")
+    e.add_argument("--no-open", action="store_true", help="print details only")
+    e.set_defaults(func=_cmd_extract)
 
     hk = sub.add_parser("hotkey", help="show or change the popover hotkey")
     hk.add_argument("spec", nargs="*", help="e.g. ctrl+t (omit to show the current one)")

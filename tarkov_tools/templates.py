@@ -361,5 +361,19 @@ def run_import(items_path: Path | None = None,
     with conn:
         counts = import_templates(conn, templates, locale, verbose)
         dbmod.set_meta(conn, "last_template_import", str(Path(items_path)))
+
+        # Extraction points live in the location files rather than the item
+        # templates, so they are a separate fetch sharing the same locale.
+        from . import extracts as ex
+
+        if verbose:
+            print("\nextraction points ...")
+        markers = {}
+        if do_download:
+            ex.download(verbose=verbose)
+            markers = ex.fetch_all_markers(verbose=verbose)
+        counts["extracts"] = ex.import_extracts(
+            conn, locale=locale, markers=markers, verbose=verbose
+        )
     conn.close()
     return counts

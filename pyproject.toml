@@ -9,7 +9,9 @@ requires-python = ">=3.11"
 #   sqlite3 -> local item database (with FTS5)
 #   urllib  -> tarkov.dev GraphQL / template downloads
 #   tkinter -> popover window
-dependencies = []
+dependencies = [
+    "comtypes>=1.4.16",
+]
 
 [project.scripts]
 tarkov-tools = "tarkov_tools.cli:main"

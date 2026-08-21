@@ -4,7 +4,11 @@ Local helpers for Escape from Tarkov: automatic display gamma, and a
 hotkey-summoned search popover that answers *"what ammo, magazines and guns
 actually go together"* without alt-tabbing to the wiki.
 
-**Pure Python standard library - zero dependencies. Managed with [uv](https://docs.astral.sh/uv/).**
+**Almost entirely the Python standard library. Managed with [uv](https://docs.astral.sh/uv/).**
+
+The one dependency is `comtypes` (small, pure Python), used only to find an
+already-open Chrome tab. Everything else is stdlib, and the tool degrades
+gracefully if it is missing.
 
 ---
 
@@ -55,6 +59,7 @@ your gamma. `scripts	arkov-tools.cmd` does the same by double-click.
 | `uv run tarkov-tools popover` | popover only |
 | `uv run tarkov-tools search m995` | one-off lookup in the terminal |
 | `uv run tarkov-tools ammo` | penetration chart |
+| `uv run tarkov-tools extract zb-1011` | open the interactive map on that extract |
 | `uv run tarkov-tools hotkey ctrl+alt+k` | rebind the popover hotkey |
 | `uv run tarkov-tools import-templates --download` | rebuild the database |
 

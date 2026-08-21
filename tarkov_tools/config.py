@@ -51,6 +51,8 @@ DEFAULTS: dict[str, Any] = {
     "search": {
         "hotkey": "ctrl+t",
         "max_results": 40,
+        # [x, y] of the popover, updated when you drag it. null = centred.
+        "position": None,
     },
 }
 

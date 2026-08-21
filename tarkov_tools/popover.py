@@ -20,7 +20,8 @@ from tkinter import font as tkfont
 from . import db as dbmod
 from . import search as searchmod
 from .config import load_config
-from .winapi import toplevel_of
+from .config import set_local_override
+from .winapi import toplevel_of, virtual_screen_bounds
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
@@ -135,6 +136,9 @@ class Popover:
         self.results: list[dict] = []
         self.events: queue.Queue[str] = queue.Queue()
         self._visible = False
+        self._drag_offset: tuple[int, int] | None = None
+        self._last_position: tuple[int, int] | None = None
+        self._size = (1000, 620)
         self._build()
 
     # --- construction --------------------------------------------------
@@ -149,10 +153,13 @@ class Popover:
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
 
-        width, height = 1000, 620
-        sw = self.root.winfo_screenwidth()
-        sh = self.root.winfo_screenheight()
-        self.root.geometry(f"{width}x{height}+{(sw - width) // 2}+{(sh - height) // 3}")
+        width, height = self._size
+        saved = load_config()["search"].get("position")
+        if isinstance(saved, (list, tuple)) and len(saved) == 2:
+            x, y = self._clamp_position(int(saved[0]), int(saved[1]))
+        else:
+            x, y = self._default_position()
+        self.root.geometry(f"{width}x{height}+{x}+{y}")
 
         mono = "Consolas" if "Consolas" in tkfont.families() else "Courier New"
         self.font_entry = (mono, 16)
@@ -167,7 +174,15 @@ class Popover:
         # search row
         row = tk.Frame(inner, bg=BG_ALT)
         row.pack(fill="x", padx=0, pady=0)
-        tk.Label(row, text="  search ", bg=BG_ALT, fg=ACCENT, font=self.font_entry).pack(side="left")
+        self.handle = tk.Label(
+            row, text="  ≡  search ", bg=BG_ALT, fg=ACCENT, font=self.font_entry
+        )
+        self.handle.pack(side="left")
+        # No title bar (overrideredirect), so dragging is implemented by hand
+        # on the chrome: the grip, the empty part of the search row, and the
+        # hint bar. The entry and result panes stay normal for text selection.
+        self._make_draggable(self.handle)
+        self._make_draggable(row)
         self.entry = tk.Entry(
             row, bg=BG_ALT, fg=FG, insertbackground=ACCENT, font=self.font_entry,
             relief="flat", highlightthickness=0,
@@ -206,15 +221,93 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  type to search   ↑↓ move   Enter details   Esc hide  ",
+            text="  type to search   ↑↓ move   Enter details   Esc hide   ≡ drag to move, double-click to centre  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
+        self._make_draggable(hint)
 
         self.root.bind("<Escape>", lambda e: self.hide())
         self.root.protocol("WM_DELETE_WINDOW", self.hide)
         self.root.withdraw()
         self.root.after(60, self._pump)
+
+    # --- dragging ------------------------------------------------------
+
+    def _make_draggable(self, widget) -> None:
+        widget.configure(cursor="fleur")
+        widget.bind("<ButtonPress-1>", self._start_drag)
+        widget.bind("<B1-Motion>", self._on_drag)
+        widget.bind("<ButtonRelease-1>", self._end_drag)
+        widget.bind("<Double-Button-1>", self._centre)
+
+    def _default_position(self) -> tuple[int, int]:
+        """Centred horizontally on the primary screen, a third of the way down."""
+        width, height = self._size
+        sw = self.root.winfo_screenwidth()
+        sh = self.root.winfo_screenheight()
+        return (sw - width) // 2, (sh - height) // 3
+
+    def _clamp_position(self, x: int, y: int) -> tuple[int, int]:
+        """Keep the window reachable across the whole multi-monitor desktop.
+
+        The virtual desktop origin is negative when a second monitor sits left
+        of or above the primary, so this clamps against that box rather than a
+        single screen. A margin is kept on-screen so the drag handle can always
+        be grabbed again.
+        """
+        width, height = self._size
+        vx, vy, vw, vh = virtual_screen_bounds()
+        margin = 120
+        x = max(vx - width + margin, min(x, vx + vw - margin))
+        y = max(vy, min(y, vy + vh - margin))
+        return int(x), int(y)
+
+    def _start_drag(self, event) -> None:
+        self._drag_offset = (
+            event.x_root - self.root.winfo_x(),
+            event.y_root - self.root.winfo_y(),
+        )
+
+    def _on_drag(self, event) -> None:
+        if self._drag_offset is None:
+            return
+        dx, dy = self._drag_offset
+        x, y = self._clamp_position(event.x_root - dx, event.y_root - dy)
+        self.root.geometry(f"+{x}+{y}")
+        # Remember what we asked for. winfo_x/y lag until Tk processes the
+        # geometry change, so reading them back on release can persist a
+        # stale position.
+        self._last_position = (x, y)
+
+    def _end_drag(self, event=None) -> None:
+        if self._drag_offset is None:
+            return
+        self._drag_offset = None
+        if self._last_position is not None:
+            self._save_position(*self._last_position)
+            self._last_position = None
+        else:
+            self._save_position()
+
+    def _centre(self, event=None) -> str:
+        """Double-click the chrome to bring the window back to the middle."""
+        self._drag_offset = None
+        x, y = self._default_position()
+        self.root.geometry(f"+{x}+{y}")
+        # Save the intended coordinates: winfo_x/y still report the old
+        # position until Tk has processed the geometry change.
+        self._save_position(x, y)
+        return "break"
+
+    def _save_position(self, x: int | None = None, y: int | None = None) -> None:
+        try:
+            if x is None or y is None:
+                x, y = self.root.winfo_x(), self.root.winfo_y()
+            set_local_override("search", "position", [int(x), int(y)])
+        except Exception:
+            # Remembering the position is a convenience; never let it break the UI.
+            pass
 
     # --- visibility ----------------------------------------------------
 

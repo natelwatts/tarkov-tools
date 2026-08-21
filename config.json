@@ -29,6 +29,7 @@
   },
   "search": {
     "hotkey": "ctrl+t",
-    "max_results": 40
+    "max_results": 40,
+    "position": null
   }
 }

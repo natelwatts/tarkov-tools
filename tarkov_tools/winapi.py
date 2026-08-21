@@ -188,6 +188,31 @@ def window_class(hwnd) -> str:
     return buf.value
 
 
+# --- virtual screen (all monitors as one bounding box) ------------------
+
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+SM_CXVIRTUALSCREEN = 78
+SM_CYVIRTUALSCREEN = 79
+
+user32.GetSystemMetrics.argtypes = [ctypes.c_int]
+user32.GetSystemMetrics.restype = ctypes.c_int
+
+
+def virtual_screen_bounds() -> tuple[int, int, int, int]:
+    """(x, y, width, height) spanning every monitor.
+
+    On a multi-monitor setup the origin can be negative, so a window position
+    must be clamped against this box rather than against one screen size.
+    """
+    return (
+        user32.GetSystemMetrics(SM_XVIRTUALSCREEN),
+        user32.GetSystemMetrics(SM_YVIRTUALSCREEN),
+        user32.GetSystemMetrics(SM_CXVIRTUALSCREEN),
+        user32.GetSystemMetrics(SM_CYVIRTUALSCREEN),
+    )
+
+
 def foreground_window():
     return user32.GetForegroundWindow()
 

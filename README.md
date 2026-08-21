@@ -145,6 +145,17 @@ uv run tarkov-tools popover
 Press **Ctrl+T** (configurable) any time - including in game - and a search
 box appears. Type, arrow through results, Esc to dismiss.
 
+**Moving it.** The window has no title bar, so dragging is implemented on the
+chrome: grab the grip next to "search", the empty part of the search row, or
+the hint bar along the bottom (the cursor changes to a move cursor there).
+Double-click any of those to snap it back to the centre.
+
+The position is remembered in `config.local.json` and restored next time. It
+is clamped to the virtual desktop on both drag and load, so it cannot be lost
+off-screen - including on a multi-monitor setup where the second display sits
+at negative coordinates. If a saved position is somehow unreachable it is
+pulled back into view automatically.
+
 The gamma watcher recognises this window by title *and* window class, so
 summoning the popover does not read as "you left the game": the gamma stays
 applied, and stays on the monitor the **game** is on rather than following

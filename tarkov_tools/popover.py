@@ -41,17 +41,37 @@ MAG_HEADER = "     cap   ergo  name"
 
 # Tab cycles these. (label, kind, side) - kind/side of None means no narrowing.
 # With the search box empty, a filter lists that whole category.
-FILTERS = (
+BASE_FILTERS = (
     ("All", None, None),
     ("Guns", "weapon", None),
     ("Ammo", "ammo", None),
     ("Mags", "magazine", None),
-    ("Needed", "needed", None),
+)
+# Only offered once a TarkovTracker account has been synced. The integration
+# is optional, and an empty filter is worse than no filter.
+TRACKER_FILTER = ("Needed", "needed", None)
+EXTRACT_FILTERS = (
     ("Extracts", "extract", None),
     ("Exfil PMC", "extract", "Pmc"),
     ("Exfil Scav", "extract", "Scav"),
     ("Exfil Co-op", "extract", "Coop"),
 )
+
+
+def build_filters(conn) -> tuple:
+    """The filter set this database can actually serve."""
+    filters = list(BASE_FILTERS)
+    if searchmod.tracker_configured(conn):
+        filters.append(TRACKER_FILTER)
+    try:
+        has_extracts = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='extracts'"
+        ).fetchone() and conn.execute("SELECT 1 FROM extracts LIMIT 1").fetchone()
+    except Exception:
+        has_extracts = False
+    if has_extracts:
+        filters.extend(EXTRACT_FILTERS)
+    return tuple(filters)
 
 # Penetration bands used for the colour cue, matching how players talk about
 # armour class: roughly "handles class N".
@@ -168,6 +188,7 @@ class Popover:
         self._last_position: tuple[int, int] | None = None
         self._size = (1000, 620)
         self.filter_index = 0
+        self.filters = build_filters(conn)
         self._build()
 
     # --- construction --------------------------------------------------
@@ -252,7 +273,7 @@ class Popover:
         self.filter_labels = []
         tk.Label(self.filter_bar, text="  Tab ", bg=BG_ALT, fg="#5a606c",
                  font=(mono, 9)).pack(side="left")
-        for index, (label, _kind, _side) in enumerate(FILTERS):
+        for index, (label, _kind, _side) in enumerate(self.filters):
             widget = tk.Label(self.filter_bar, text=f" {label} ", bg=BG_ALT,
                               fg=FG_DIM, font=(mono, 9), padx=4)
             widget.pack(side="left")
@@ -414,7 +435,7 @@ class Popover:
     # --- filters -------------------------------------------------------
 
     def _set_filter(self, index: int) -> str:
-        self.filter_index = index % len(FILTERS)
+        self.filter_index = index % len(self.filters)
         for position, widget in enumerate(self.filter_labels):
             active = position == self.filter_index
             widget.configure(
@@ -437,7 +458,7 @@ class Popover:
                                                   "Tab", "ISO_Left_Tab"):
             return
         term = self.entry.get().strip()
-        _label, kind, side = FILTERS[self.filter_index]
+        _label, kind, side = self.filters[self.filter_index]
         # An active filter with an empty box lists that whole category, so the
         # filter doubles as a way to browse.
         if term or kind:

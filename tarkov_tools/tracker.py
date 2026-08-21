@@ -327,8 +327,16 @@ def sync_needed(conn, token: str | None = None, game_mode: str | None = None,
 
 
 def needs_for_item(conn, item_id: str, available_only: bool = False) -> list[dict]:
-    """Everything still asking for this item."""
-    ensure_schema(conn)
+    """Everything still asking for this item, or nothing if never synced.
+
+    Deliberately does not create the table: a database that has never seen a
+    sync should stay that way, so the optional integration leaves no trace.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='needed_items'"
+    ).fetchone()
+    if not row:
+        return []
     clause = " AND available = 1" if available_only else ""
     rows = conn.execute(
         # Unlocked first, then tasks before hideout: a quest you can hand in

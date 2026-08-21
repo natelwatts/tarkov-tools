@@ -41,6 +41,24 @@ def item_kind(conn: sqlite3.Connection, item_id: str) -> str:
 ITEM_KINDS = ("weapon", "ammo", "magazine", "item")
 
 
+def tracker_configured(conn: sqlite3.Connection) -> bool:
+    """True only once a TarkovTracker account has actually been synced.
+
+    The whole account integration is optional - someone who has never
+    connected one should not see an empty Needed filter or a table that does
+    not exist, so everything quest-related keys off this.
+    """
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='needed_items'"
+        ).fetchone()
+        if not row:
+            return False
+        return bool(conn.execute("SELECT 1 FROM needed_items LIMIT 1").fetchone())
+    except sqlite3.Error:
+        return False
+
+
 def browse(conn: sqlite3.Connection, kind: str, side: str | None = None,
            limit: int = 200) -> list[dict[str, Any]]:
     """Everything of one kind, for when the search box is empty.
@@ -51,6 +69,10 @@ def browse(conn: sqlite3.Connection, kind: str, side: str | None = None,
     if kind == "needed":
         # Outstanding requirements, biggest shortfall first. Wide "any of N"
         # objectives are excluded: those are a category, not a shopping item.
+        # The table only exists once a TarkovTracker account has been synced;
+        # without one this is simply empty rather than an error.
+        if not tracker_configured(conn):
+            return []
         rows = conn.execute(
             """
             SELECT n.item_id AS id, i.name, i.short_name, i.avg_24h_price,
@@ -118,6 +140,8 @@ def search(conn: sqlite3.Connection, term: str, limit: int = 40,
         return browse(conn, kind, side, max(limit, 300)) if kind else []
 
     if kind == "needed":
+        if not tracker_configured(conn):
+            return []
         # Narrow the shopping list by name rather than running a fresh search.
         lowered_term = term.lower()
         return [r for r in browse(conn, "needed", None, 400)
@@ -334,13 +358,15 @@ def describe(conn: sqlite3.Connection, item_id: str) -> dict[str, Any]:
     kind = item_kind(conn, item_id)
     out: dict[str, Any] = {"kind": kind, "item": dict(base), "offers": offers_for(conn, item_id)}
 
-    # What still wants this item, if a TarkovTracker account is connected.
-    try:
-        from . import tracker as tracker_mod
+    # What still wants this item - only if a TarkovTracker account is set up.
+    out["needs"] = []
+    if tracker_configured(conn):
+        try:
+            from . import tracker as tracker_mod
 
-        out["needs"] = tracker_mod.needs_for_item(conn, item_id)
-    except Exception:
-        out["needs"] = []
+            out["needs"] = tracker_mod.needs_for_item(conn, item_id)
+        except Exception:
+            pass
 
     if kind == "ammo":
         stats = conn.execute("SELECT * FROM ammo WHERE item_id = ?", (item_id,)).fetchone()

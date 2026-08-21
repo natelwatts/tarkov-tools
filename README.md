@@ -215,7 +215,12 @@ sensibly per category: ammo by caliber then penetration, mags by capacity.
 
 ---
 
-## Quest and hideout needs (optional)
+## Quest and hideout needs (entirely optional)
+
+**Skip this and everything else still works.** With no TarkovTracker account
+the `Needed` filter is not offered at all, no quest data is fetched, and the
+database never even gains the table. Gamma, guns, ammo, magazines and extracts
+are unaffected.
 
 Connect a [TarkovTracker](https://tarkovtracker.org/) account and every item
 shows what still wants it:
@@ -325,6 +330,30 @@ Run a real `sync` to replace it with authoritative values.
 uv run python scripts\make_demo_data.py
 uv run tarkov-tools sync --cache
 ```
+
+---
+
+## Sharing this with someone
+
+A `git clone` (or `scripts\make-share-zip.cmd`, which uses `git archive`) is
+safe: it carries tracked files only.
+
+> **Do not zip the folder by hand.** That would include `config.local.json`,
+> which holds your TarkovTracker token, and `data\`, which holds your
+> database. Both are gitignored precisely so they never travel.
+
+What the other person runs:
+
+```powershell
+uv sync
+uv run tarkov-tools import-templates --download
+uv run tarkov-tools
+```
+
+No account, no token, no API key. They get gamma, the search popover, the
+full compatibility graph and the extract maps. If they later want quest
+tracking they can add their own token; if they never do, nothing prompts them
+about it.
 
 ---
 

@@ -2,8 +2,14 @@
 
 The interactive map takes no filter parameters in its URL - its bundle reads
 only `marker`, `canvasEngine`, `skin` and `wgUserId` - and it does not persist
-category state. So the sidebar is driven the only way left: find the controls
-in the accessibility tree and click them.
+category state. So the sidebar is driven directly.
+
+Categories are plain Text elements with no pattern of their own, but the group
+wrapping each one supports UI Automation's Invoke, so they are activated
+through the accessibility tree rather than by clicking a screen position.
+That matters: coordinate clicks depended on the page having finished scrolling
+to the focused marker, on the browser being the foreground window, and on
+nothing overlapping the sidebar. Invoke needs none of those.
 
 The sidebar is laid out as section headers with their categories indented
 underneath:
@@ -15,8 +21,8 @@ underneath:
       PMC      Boss
       Scav     Cultists
 
-Categories are plain Text elements with no toggle pattern, so they are located
-by name within their section's vertical band and clicked by coordinate.
+"PMC" appears under both sections, so a category is identified by name within
+its section's vertical band.
 
 This drives someone else's web page, so treat it as best effort: it is wrapped
 so any failure leaves the map open and simply unfiltered, and it can be turned
@@ -27,77 +33,18 @@ from __future__ import annotations
 
 import ctypes
 import time
-from ctypes import wintypes
-
-from .winapi import virtual_screen_bounds
-
-user32 = ctypes.WinDLL("user32", use_last_error=True)
 
 # Header rows sit further left than the categories indented under them.
 SECTION_HEADERS = ("Extractions", "Spawns", "Miscellaneous", "Loot")
 
 DEFAULT_WANTED = (("Extractions", "PMC"), ("Extractions", "Scav"), ("Spawns", "PMC"))
 
-
-# --- mouse --------------------------------------------------------------
-
-MOUSEEVENTF_MOVE = 0x0001
-MOUSEEVENTF_LEFTDOWN = 0x0002
-MOUSEEVENTF_LEFTUP = 0x0004
-MOUSEEVENTF_ABSOLUTE = 0x8000
-MOUSEEVENTF_VIRTUALDESK = 0x4000
-INPUT_MOUSE = 0
+# How far up from a label to look for something that can be invoked.
+INVOKE_SEARCH_DEPTH = 4
 
 
-class MOUSEINPUT(ctypes.Structure):
-    _fields_ = [
-        ("dx", wintypes.LONG),
-        ("dy", wintypes.LONG),
-        ("mouseData", wintypes.DWORD),
-        ("dwFlags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
-    ]
-
-
-class _MInputUnion(ctypes.Union):
-    _fields_ = [("mi", MOUSEINPUT), ("padding", ctypes.c_ubyte * 32)]
-
-
-class MINPUT(ctypes.Structure):
-    _fields_ = [("type", wintypes.DWORD), ("u", _MInputUnion)]
-
-
-user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(MINPUT), ctypes.c_int]
-user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
-user32.SetCursorPos.argtypes = [ctypes.c_int, ctypes.c_int]
-
-
-def _click(x: int, y: int) -> None:
-    """Click an absolute virtual-desktop point.
-
-    Absolute mouse coordinates are normalised to 0..65535. Without
-    MOUSEEVENTF_VIRTUALDESK that range covers only the primary monitor, which
-    would send every click to the wrong screen on a multi-monitor setup where
-    a display sits at negative coordinates.
-    """
-    vx, vy, vw, vh = virtual_screen_bounds()
-    nx = int(round((x - vx) * 65535 / max(vw - 1, 1)))
-    ny = int(round((y - vy) * 65535 / max(vh - 1, 1)))
-    flags = MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK
-    events = [
-        MINPUT(INPUT_MOUSE, _MInputUnion(mi=MOUSEINPUT(nx, ny, 0, flags | MOUSEEVENTF_MOVE, 0, None))),
-        MINPUT(INPUT_MOUSE, _MInputUnion(mi=MOUSEINPUT(nx, ny, 0, flags | MOUSEEVENTF_LEFTDOWN, 0, None))),
-        MINPUT(INPUT_MOUSE, _MInputUnion(mi=MOUSEINPUT(nx, ny, 0, flags | MOUSEEVENTF_LEFTUP, 0, None))),
-    ]
-    array = (MINPUT * len(events))(*events)
-    user32.SendInput(len(events), array, ctypes.sizeof(MINPUT))
-
-
-# --- sidebar reading ----------------------------------------------------
-
-def _labels(uia, UIA, root) -> list[tuple[int, int, str, object]]:
-    """Every named Text element with a real rectangle, as (y, x, name, rect)."""
+def _labels(uia, UIA, root) -> list[tuple[int, int, str, object, object]]:
+    """(top, left, name, rect, element) for every named Text element."""
     out = []
     found = root.FindAll(
         UIA.TreeScope_Subtree,
@@ -111,44 +58,72 @@ def _labels(uia, UIA, root) -> list[tuple[int, int, str, object]]:
         except Exception:
             continue
         if name and rect.right > rect.left and rect.bottom > rect.top:
-            out.append((rect.top, rect.left, name, rect))
-    out.sort()
+            out.append((rect.top, rect.left, name, rect, element))
+    out.sort(key=lambda row: (row[0], row[1]))
     return out
 
 
 def _find(labels, name: str, top: int | None = None, bottom: int | None = None):
-    """First label with this exact name, optionally inside a vertical band."""
-    for y, _x, label, rect in labels:
+    """The first label with this exact name, optionally inside a vertical band."""
+    for row_top, _left, label, _rect, element in labels:
         if label != name:
             continue
-        if top is not None and y < top:
+        if top is not None and row_top < top:
             continue
-        if bottom is not None and y >= bottom:
+        if bottom is not None and row_top >= bottom:
             continue
-        return rect
+        return element
     return None
 
 
 def _section_bands(labels) -> dict[str, tuple[int, int]]:
-    """Vertical extent of each sidebar section, so 'PMC' can be disambiguated.
-
-    'PMC' appears under both Extractions and Spawns; the band it falls in is
-    what tells them apart.
-    """
-    headers = [(y, name) for y, _x, name, _r in labels if name in SECTION_HEADERS]
-    headers.sort()
+    """Vertical extent of each sidebar section, so "PMC" can be disambiguated."""
+    headers = sorted((row[0], row[2]) for row in labels if row[2] in SECTION_HEADERS)
     bands: dict[str, tuple[int, int]] = {}
-    for index, (y, name) in enumerate(headers):
-        end = headers[index + 1][0] if index + 1 < len(headers) else y + 10_000
-        bands.setdefault(name, (y, end))
+    for index, (top, name) in enumerate(headers):
+        end = headers[index + 1][0] if index + 1 < len(headers) else top + 10_000
+        bands.setdefault(name, (top, end))
     return bands
 
 
-def apply_filters(hwnd, wanted=DEFAULT_WANTED, timeout: float = 20.0,
+def _invoke(uia, UIA, element) -> bool:
+    """Activate a label by invoking the nearest ancestor that supports it."""
+    walker = uia.ControlViewWalker
+    node = element
+    for _ in range(INVOKE_SEARCH_DEPTH):
+        if node is None:
+            return False
+        try:
+            pattern = node.GetCurrentPattern(UIA.UIA_InvokePatternId)
+            if pattern:
+                pattern.QueryInterface(UIA.IUIAutomationInvokePattern).Invoke()
+                return True
+        except Exception:
+            pass
+        try:
+            node = walker.GetParentElement(node)
+        except Exception:
+            return False
+    return False
+
+
+def _read_sidebar(uia, UIA, hwnd):
+    """Current sidebar labels, or None if it is not rendered yet."""
+    try:
+        root = uia.ElementFromHandle(ctypes.c_void_p(hwnd))
+        labels = _labels(uia, UIA, root)
+    except Exception:
+        return None
+    if not _find(labels, "Hide All") or not _section_bands(labels):
+        return None
+    return labels
+
+
+def apply_filters(hwnd, wanted=DEFAULT_WANTED, timeout: float = 25.0,
                   verbose: bool = False) -> bool:
     """Hide every category, then re-enable the wanted ones.
 
-    Returns True if the sidebar was found and clicked, False otherwise.
+    Returns True if at least one category was activated.
     """
     from .browser_tabs import _uia
 
@@ -158,51 +133,39 @@ def apply_filters(hwnd, wanted=DEFAULT_WANTED, timeout: float = 20.0,
     uia, UIA = created
 
     deadline = time.monotonic() + timeout
-    labels = []
-    hide_all = None
+    labels = None
     while time.monotonic() < deadline:
-        try:
-            root = uia.ElementFromHandle(ctypes.c_void_p(hwnd))
-            labels = _labels(uia, UIA, root)
-            hide_all = _find(labels, "Hide All")
-            if hide_all and _section_bands(labels):
-                break
-        except Exception:
-            pass
-        time.sleep(0.7)
-
-    if not hide_all:
+        labels = _read_sidebar(uia, UIA, hwnd)
+        if labels:
+            break
+        time.sleep(0.5)
+    if not labels:
         if verbose:
             print("  map filters: sidebar not found (page still loading?)")
         return False
 
-    bands = _section_bands(labels)
-    targets = []
+    hide_all = _find(labels, "Hide All")
+    if not hide_all or not _invoke(uia, UIA, hide_all):
+        if verbose:
+            print("  map filters: could not activate Hide All")
+        return False
+    time.sleep(0.4)
+
+    enabled = 0
     for section, category in wanted:
-        band = bands.get(section)
+        # Re-read each time: hiding categories can reflow the list, so an
+        # element captured earlier may no longer be the row it was.
+        labels = _read_sidebar(uia, UIA, hwnd) or labels
+        band = _section_bands(labels).get(section)
         if not band:
             continue
-        rect = _find(labels, category, band[0] + 1, band[1])
-        if rect:
-            targets.append((f"{section}/{category}", rect))
-
-    if not targets:
-        if verbose:
-            print("  map filters: no matching categories")
-        return False
-
-    # Put the pointer back where it was; nobody expects a lookup to move it.
-    origin = wintypes.POINT()
-    user32.GetCursorPos(ctypes.byref(origin))
-    try:
-        _click((hide_all.left + hide_all.right) // 2,
-               (hide_all.top + hide_all.bottom) // 2)
-        time.sleep(0.35)
-        for label, rect in targets:
-            _click((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2)
-            time.sleep(0.22)
+        element = _find(labels, category, band[0] + 1, band[1])
+        if element and _invoke(uia, UIA, element):
+            enabled += 1
             if verbose:
-                print(f"  map filters: enabled {label}")
-    finally:
-        user32.SetCursorPos(origin.x, origin.y)
-    return True
+                print(f"  map filters: enabled {section}/{category}")
+        time.sleep(0.25)
+
+    if verbose and not enabled:
+        print("  map filters: no matching categories")
+    return enabled > 0

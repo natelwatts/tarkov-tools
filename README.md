@@ -214,6 +214,15 @@ account never disturbs them.
 Results are tagged `GUN` / `AMO` / `MAG` / `EXT`, so extraction points share
 the one search bar with everything else.
 
+**Ctrl+Enter opens whatever is highlighted on the wiki** - a gun, a round, a
+magazine, a part, any item at all. An extract opens its map's article, since
+plain Enter already opens the interactive map on the exit itself.
+
+The wiki does not always file an item under the name the game uses (the M4A1
+lives at *Colt M4A1 5.56x45 assault rifle*), so the title is confirmed through
+the wiki's API before the tab opens, and anything with no article at all lands
+on a search instead of an empty page.
+
 **Tab cycles a filter**, or jump straight to one with **Ctrl+<key>**. Keys run
 `1 2 3 4 5 6 7 8 9 0` then `y u i o p`, the way browser tabs number themselves,
 and each chip shows its own key. Shift+Tab steps back, and clicking a chip

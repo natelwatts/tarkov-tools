@@ -338,6 +338,7 @@ class Popover:
         self.entry.bind("<Down>", self._nav_down)
         self.entry.bind("<Up>", self._nav_up)
         self.entry.bind("<Return>", self._nav_enter)
+        self.entry.bind("<Control-Return>", self._open_wiki)
         self.entry.bind("<Escape>", self._on_escape)
         self.entry.bind("<BackSpace>", self._on_backspace)
         # Tab would otherwise move focus out of the entry, so both bindings
@@ -401,7 +402,7 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  ←→ / Tab / Ctrl+1-0,y-p filter   ↑↓ move   Enter parts / map   Ctrl+Shift+←→ reorder   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
+            text="  ←→ / Tab / Ctrl+1-0,y-p filter   ↑↓ move   Enter parts / map   Ctrl+Enter wiki   Ctrl+Shift+←→ reorder   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
@@ -924,6 +925,45 @@ class Popover:
                 )
         except Exception as exc:
             print(f"could not open the map: {exc}")
+
+    def _wiki_name(self) -> str | None:
+        """What the highlighted row should be looked up as on the wiki.
+
+        An extract goes to its map's article rather than the extract itself -
+        the wiki has a page per location, not per exit, and plain Enter
+        already opens the interactive map on the exit.
+        """
+        if self.view == "slots":
+            # The rows here are slot categories, so the weapon is the subject.
+            return (self.slot_weapon or {}).get("name")
+        if not self.results:
+            return None
+        current = self.listbox.curselection()
+        entry = self.results[current[0] if current else 0]
+        if entry.get("kind") == "extract":
+            return entry.get("short_name") or entry.get("name")
+        return entry.get("name")
+
+    def _open_wiki(self, event=None):
+        """Open the highlighted row's wiki article.
+
+        Hidden first for the same reason as the map: reusing a tab types the
+        URL with Ctrl+L and those keystrokes must not land in the search box.
+        """
+        from . import extracts as extracts_mod
+        from . import wiki as wikimod
+
+        name = wikimod.clean_name(self._wiki_name() or "")
+        if not name:
+            return "break"
+        self.hide()
+        self.root.update_idletasks()
+        try:
+            url, title = wikimod.page_for(name)
+            extracts_mod.open_in_browser(url, reuse_title=title)
+        except Exception as exc:
+            print(f"could not open the wiki: {exc}")
+        return "break"
 
     def _nav_enter(self, event=None):
         current = self.listbox.curselection()

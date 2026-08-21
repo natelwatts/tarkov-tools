@@ -243,10 +243,21 @@ def type_url_into_address_bar(url: str) -> None:
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 
+SW_RESTORE = 9
+user32.IsIconic.argtypes = [wintypes.HWND]
+user32.IsIconic.restype = wintypes.BOOL
+
+
 def _raise_window(hwnd) -> None:
-    """Bring a window forward, attaching to the foreground thread if needed."""
+    """Bring a window forward without disturbing its size or position.
+
+    SW_RESTORE is only safe on a minimised window: applied to a maximised one
+    it un-maximises it, shrinking the browser back to its pre-maximise size.
+    So it is used only when the window is actually iconic.
+    """
     try:
-        user32.ShowWindow(hwnd, 9)  # SW_RESTORE, in case it is minimised
+        if user32.IsIconic(hwnd):
+            user32.ShowWindow(hwnd, SW_RESTORE)
         if user32.SetForegroundWindow(hwnd):
             return
         current = user32.GetForegroundWindow()

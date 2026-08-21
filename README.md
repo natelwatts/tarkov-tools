@@ -195,7 +195,10 @@ saving.
 - Search a **round** → every gun that fires it and every magazine that holds it
 - Search a **magazine** → what it accepts and what accepts it
 - **Enter on a gun** → its attachment categories; arrow through them to see
-  every part that fits, sorted by ergonomics then recoil. Esc goes back.
+  every part that fits, sorted by ergonomics then recoil.
+- **Enter on a category** → those parts as rows of their own, so you can walk
+  them one at a time, mark them, or open one on the wiki. Esc backs out a
+  level at a time: parts → categories → results.
 - Search a **part** → its ergo/recoil/accuracy/loudness and every weapon it
   fits on, however many levels up that is.
 

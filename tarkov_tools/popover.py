@@ -258,11 +258,15 @@ class Popover:
                             .get('arrow_keys_switch_filters') or 'always')
         self._syncing = False
         self._sync_lines: list[str] = []
-        # 'search' shows results; 'slots' shows one weapon's attachment
-        # categories, with the parts for the highlighted one in the detail.
+        # Three levels, each replacing the results list in place:
+        # 'search' shows results, 'slots' one weapon's attachment categories
+        # with that category's parts compared in the detail pane, and 'parts'
+        # those parts as rows of their own so one can be picked out.
         self.view = 'search'
         self.slot_weapon: dict | None = None
         self.slot_entries: list[dict] = []
+        self.slot_index = 0
+        self.part_entries: list[dict] = []
         self.have: set[str] = set()
         self.watch: set[str] = set()
         self.status_note = ''
@@ -543,16 +547,42 @@ class Popover:
 
     # --- personal lists -------------------------------------------------
 
-    def _selected_item_id(self) -> str | None:
-        """The item currently highlighted, in either view."""
+    def _current_row(self) -> int:
+        """The highlighted row, or the first one when nothing is selected."""
         current = self.listbox.curselection()
-        if self.view == "slots":
-            # In the slot view the detail pane is a list of parts, so the
-            # weapon itself is what is highlighted.
-            return (self.slot_weapon or {}).get("id")
-        if not self.results:
+        return current[0] if current else 0
+
+    def _current_result(self) -> dict | None:
+        """The highlighted search result, if the selection points at one.
+
+        The selected row is not always a result. Browsing a weapon fills the
+        same listbox with its slots and then their parts, and narrowing a
+        search can leave the selection pointing past the end of the new,
+        shorter list - so the index has to be checked rather than trusted.
+        """
+        if self.view != "search":
             return None
-        entry = self.results[current[0] if current else 0]
+        index = self._current_row()
+        return self.results[index] if index < len(self.results) else None
+
+    def _current_part(self) -> dict | None:
+        """The highlighted part, when browsing inside a category."""
+        if self.view != "parts":
+            return None
+        index = self._current_row()
+        return self.part_entries[index] if index < len(self.part_entries) else None
+
+    def _selected_item_id(self) -> str | None:
+        """The item currently highlighted, whichever level is showing."""
+        if self.view == "parts":
+            return (self._current_part() or {}).get("id")
+        if self.view == "slots":
+            # The rows here are categories, not parts, so the weapon is what
+            # the marks apply to.
+            return (self.slot_weapon or {}).get("id")
+        entry = self._current_result()
+        if not entry:
+            return None
         item_id = entry.get("id") or ""
         return None if item_id.startswith("extract:") else item_id
 
@@ -564,7 +594,11 @@ class Popover:
         self._refresh_marks()
         # The chip only exists while the list has something in it.
         self._rebuild_filter_bar()
-        if self.view != "slots":
+        if self.view == "parts":
+            self._show_parts(self._current_row())
+        elif self.view == "slots":
+            self._render_slot(self._current_row())
+        else:
             # Redraw the rows so the marker appears, keeping the selection.
             keep = self.listbox.curselection()
             self._on_type()
@@ -572,9 +606,6 @@ class Popover:
                 self.listbox.selection_clear(0, "end")
                 self.listbox.selection_set(keep[0])
             self._render(item_id)
-        else:
-            current = self.listbox.curselection()
-            self._render_slot(current[0] if current else 0)
         verb = "added to" if now_listed else "removed from"
         self.status_note = f"{verb} {list_name}"
         return "break"
@@ -598,15 +629,70 @@ class Popover:
         slots = searchmod.weapon_slots(self.conn, weapon["id"])
         if not slots:
             return
-        self.view = "slots"
         self.slot_weapon = weapon
         self.slot_entries = slots
+        self._show_slots(0)
+
+    def _show_slots(self, index: int = 0) -> None:
+        """Draw the categories, highlighting one.
+
+        Coming back from a category's parts returns to that category rather
+        than to the top of the list, so backing out of a rabbit hole leaves
+        you where you were.
+        """
+        self.view = "slots"
+        self.part_entries = []
         self.listbox.delete(0, "end")
-        for entry in slots:
+        for entry in self.slot_entries:
             self.listbox.insert("end", f"{entry['count']:>3}  {entry['label']}")
+        index = max(0, min(len(self.slot_entries) - 1, index))
+        self.slot_index = index
         self.listbox.selection_clear(0, "end")
-        self.listbox.selection_set(0)
-        self._render_slot(0)
+        self.listbox.selection_set(index)
+        self.listbox.see(index)
+        self._render_slot(index)
+
+    def _enter_parts(self, index: int) -> None:
+        """Drill into one category, listing its parts as rows.
+
+        The category view compares every part at once, which answers "which
+        of these is best". This answers "what about that one" - each part
+        gets the full detail pane, and can be marked or opened on the wiki
+        like any other result.
+        """
+        if index >= len(self.slot_entries):
+            return
+        entry = self.slot_entries[index]
+        parts = searchmod.parts_for_slot(
+            self.conn, self.slot_weapon["id"], entry["slot"]
+        )
+        if not parts:
+            return
+        self.slot_index = index
+        self.part_entries = parts
+        self._show_parts(0)
+
+    def _show_parts(self, index: int = 0) -> None:
+        """Draw the current category's parts, highlighting one."""
+        self.view = "parts"
+        self.listbox.delete(0, "end")
+        for part in self.part_entries:
+            mark = self._marks(part.get("id") or "")
+            name = (part.get("name") or "").replace("[DEMO] ", "")
+            # Ergo earns the space a kind tag would take: every row here is a
+            # part, and the list is ordered by it.
+            self.listbox.insert(
+                "end", f"{_signed(part.get('ergonomics')):>4} {mark:<2}{name[:30]}"
+            )
+        index = max(0, min(len(self.part_entries) - 1, index))
+        self.listbox.selection_clear(0, "end")
+        self.listbox.selection_set(index)
+        self.listbox.see(index)
+        self._render(self.part_entries[index]["id"])
+
+    def _leave_parts(self) -> str:
+        self._show_slots(self.slot_index)
+        return "break"
 
     def _render_slot(self, index: int) -> None:
         entry = self.slot_entries[index]
@@ -630,13 +716,16 @@ class Popover:
             out.append((f"{(part['name'] or '')[:50]}\n", None))
         if not parts:
             out.append(("    no parts recorded\n", "dim"))
-        out.append(("\n  Esc or Backspace goes back to the results.\n", "dim"))
+        if parts:
+            out.append(("\n  Enter lists these as rows you can mark or open.\n", "dim"))
+        out.append(("  Esc or Backspace goes back.\n", "dim"))
         self._set_detail(out)
 
     def _leave_slots(self) -> str:
         self.view = "search"
         self.slot_weapon = None
         self.slot_entries = []
+        self.part_entries = []
         self._on_type()
         return "break"
 
@@ -820,11 +909,12 @@ class Popover:
         if event is not None and event.keysym in ("Up", "Down", "Return", "Escape",
                                                   "Tab", "ISO_Left_Tab"):
             return
-        if self.view == "slots":
-            # Typing means the user wants to search again.
+        if self.view != "search":
+            # Typing means the user wants to search again, however deep in.
             self.view = "search"
             self.slot_weapon = None
             self.slot_entries = []
+            self.part_entries = []
         term = self.entry.get().strip()
         _label, kind, side = self.filters[self.filter_index]
         # An active filter with an empty box lists that whole category, so the
@@ -856,7 +946,9 @@ class Popover:
                              [("type a gun, round or magazine name\n", "dim")])
 
     def _on_escape(self, event=None) -> str:
-        """Escape backs out of the slot view first, and only then hides."""
+        """Escape backs out one level at a time, and only then hides."""
+        if self.view == "parts":
+            return self._leave_parts()
         if self.view == "slots":
             return self._leave_slots()
         self.hide()
@@ -865,21 +957,24 @@ class Popover:
     def _on_backspace(self, event=None):
         # Only intercept backspace when it cannot be editing the search text,
         # otherwise it would stop deleting characters.
-        if self.view == "slots" and not self.entry.get():
+        if self.view != "search" and not self.entry.get():
+            if self.view == "parts":
+                return self._leave_parts()
             return self._leave_slots()
         return None
 
     def _move(self, delta: int) -> None:
-        rows = self.slot_entries if self.view == "slots" else self.results
+        rows = {"slots": self.slot_entries, "parts": self.part_entries}.get(
+            self.view, self.results
+        )
         if not rows:
             return
-        current = self.listbox.curselection()
-        index = (current[0] if current else 0) + delta
-        index = max(0, min(len(rows) - 1, index))
+        index = max(0, min(len(rows) - 1, self._current_row() + delta))
         self.listbox.selection_clear(0, "end")
         self.listbox.selection_set(index)
         self.listbox.see(index)
         if self.view == "slots":
+            self.slot_index = index
             self._render_slot(index)
         else:
             self._render(rows[index]["id"])
@@ -933,13 +1028,14 @@ class Popover:
         the wiki has a page per location, not per exit, and plain Enter
         already opens the interactive map on the exit.
         """
+        if self.view == "parts":
+            return (self._current_part() or {}).get("name")
         if self.view == "slots":
             # The rows here are slot categories, so the weapon is the subject.
             return (self.slot_weapon or {}).get("name")
-        if not self.results:
+        entry = self._current_result()
+        if not entry:
             return None
-        current = self.listbox.curselection()
-        entry = self.results[current[0] if current else 0]
         if entry.get("kind") == "extract":
             return entry.get("short_name") or entry.get("name")
         return entry.get("name")
@@ -966,9 +1062,13 @@ class Popover:
         return "break"
 
     def _nav_enter(self, event=None):
-        current = self.listbox.curselection()
-        if self.results:
-            chosen = self.results[current[0] if current else 0]
+        if self.view == "parts":
+            return "break"  # already at the bottom; Esc backs out
+        if self.view == "slots":
+            self._enter_parts(self._current_row())
+            return "break"
+        chosen = self._current_result()
+        if chosen:
             if chosen.get("kind") == "extract":
                 self._open_extract(chosen["id"])
             elif chosen.get("kind") == "weapon":
@@ -983,9 +1083,17 @@ class Popover:
             return
         if self.view == "slots":
             if current[0] < len(self.slot_entries):
+                self.slot_index = current[0]
                 self._render_slot(current[0])
-        elif self.results:
-            self._render(self.results[current[0]]["id"])
+            return
+        if self.view == "parts":
+            part = self._current_part()
+            if part:
+                self._render(part["id"])
+            return
+        entry = self._current_result()
+        if entry:
+            self._render(entry["id"])
 
     # --- rendering -----------------------------------------------------
 

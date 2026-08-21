@@ -584,11 +584,19 @@ def describe(conn: sqlite3.Connection, item_id: str) -> dict[str, Any]:
     out: dict[str, Any] = {"kind": kind, "item": dict(base), "offers": offers_for(conn, item_id)}
 
     out["lists"] = lists_for(conn, item_id)
-    mod = conn.execute("SELECT * FROM mods WHERE item_id = ?", (item_id,)).fetchone()
-    if mod and kind == "item":
-        out["kind"] = kind = "part"
-        out["mod"] = dict(mod)
-        out["fits"] = guns_for_part(conn, item_id)
+    # Attachments show their modifiers and what they fit. Items are classified
+    # as "part" at import now, but older databases only knew "item", so both
+    # are accepted - and an attachment without a mods row still gets its
+    # weapon list.
+    if kind in ("part", "item"):
+        mod = conn.execute(
+            "SELECT * FROM mods WHERE item_id = ?", (item_id,)
+        ).fetchone()
+        fits = guns_for_part(conn, item_id)
+        if mod or fits:
+            out["kind"] = kind = "part"
+            out["mod"] = dict(mod) if mod else {}
+            out["fits"] = fits
 
     # What still wants this item - only if a TarkovTracker account is set up.
     out["needs"] = []

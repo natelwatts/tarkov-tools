@@ -67,6 +67,13 @@ DEFAULTS: dict[str, Any] = {
         # Filter chip order, by label. Empty means the built-in order.
         # Ctrl+Shift+Left/Right in the popover rewrites this.
         "filter_order": [],
+        # What Left/Right do in the search box:
+        #   "always" - switch filter, like Tab (the caret can still be moved
+        #              with Home/End or by clicking)
+        #   "edges"  - switch only when the caret cannot move any further,
+        #              so mid-text editing still works
+        #   "never"  - leave them as ordinary caret movement
+        "arrow_keys_switch_filters": "always",
     },
 }
 

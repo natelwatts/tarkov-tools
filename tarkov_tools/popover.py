@@ -251,6 +251,8 @@ class Popover:
         self._size = (1000, 620)
         self.filter_index = 0
         self.filters = build_filters(conn)
+        self._arrow_mode = ((load_config().get('search') or {})
+                            .get('arrow_keys_switch_filters') or 'always')
         self._syncing = False
         self._sync_lines: list[str] = []
         # 'search' shows results; 'slots' shows one weapon's attachment
@@ -343,6 +345,8 @@ class Popover:
         for position, key in enumerate(FILTER_KEYS):
             self.entry.bind(f"<Control-Key-{key}>",
                             lambda e, n=position: self._jump_filter(n))
+        self.entry.bind("<Left>", lambda e: self._arrow_filter(-1))
+        self.entry.bind("<Right>", lambda e: self._arrow_filter(1))
         self.entry.bind("<Control-Shift-Left>", lambda e: self._move_filter(-1))
         self.entry.bind("<Control-Shift-Right>", lambda e: self._move_filter(1))
         self.entry.bind("<F5>", self._sync)
@@ -394,7 +398,7 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  Tab / Ctrl+1-0,y-p filter   Ctrl+Shift+←→ reorder   ↑↓ move   Enter parts / map   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
+            text="  ←→ / Tab / Ctrl+1-0,y-p filter   ↑↓ move   Enter parts / map   Ctrl+Shift+←→ reorder   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
@@ -751,6 +755,26 @@ class Popover:
         self.filter_index = target
         self._rebuild_filter_bar()
         return "break"
+
+    def _arrow_filter(self, delta: int) -> str | None:
+        """Left/Right move between filters, subject to the configured mode.
+
+        Returning None lets Tk handle the key normally, which is what keeps
+        ordinary caret movement working in "edges" and "never" modes.
+        """
+        mode = self._arrow_mode
+        if mode == "never":
+            return None
+        if mode == "edges":
+            try:
+                caret = self.entry.index("insert")
+                length = len(self.entry.get())
+            except Exception:
+                caret, length = 0, 0
+            at_edge = (caret == 0) if delta < 0 else (caret >= length)
+            if not at_edge:
+                return None
+        return self._set_filter(self.filter_index + delta)
 
     def _next_filter(self, event=None) -> str:
         return self._set_filter(self.filter_index + 1)

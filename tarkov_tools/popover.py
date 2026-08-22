@@ -360,6 +360,7 @@ class Popover:
         self.entry.bind("<Up>", self._nav_up)
         self.entry.bind("<Return>", self._nav_enter)
         self.entry.bind("<Control-Return>", self._open_wiki)
+        self.entry.bind("<Control-Shift-Return>", self._open_market)
         self.entry.bind("<Escape>", self._on_escape)
         self.entry.bind("<BackSpace>", self._on_backspace)
         # Tab would otherwise move focus out of the entry, so both bindings
@@ -423,7 +424,7 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  ←→ / Tab / Ctrl+1-0,y-p filter   ↑↓ move   Enter parts / map   Ctrl+Enter wiki   Ctrl+Shift+←→ reorder   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
+            text="  ←→ / Tab / Ctrl+1-0,y-p filter   ↑↓ move   Enter parts / map   Ctrl+Enter wiki   Ctrl+Shift+Enter price   Ctrl+Shift+←→ reorder   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
@@ -874,6 +875,14 @@ class Popover:
             try:
                 if _refresh_prices(conn):
                     self.events.put(("prices-updated", None))
+                # The slug map only changes when the game patches, but pull it
+                # here so the first Ctrl+Shift+Enter is not a network wait.
+                try:
+                    from . import market as market_mod
+
+                    market_mod.refresh_if_stale(conn)
+                except Exception:
+                    pass
             finally:
                 conn.close()
         except Exception:
@@ -1034,6 +1043,39 @@ class Popover:
 
     # --- search --------------------------------------------------------
 
+    HELP = [
+        ("Tarkov Tools\n\n", "head"),
+        ("  finding things\n", "head"),
+        ("    type            ", "label"), ("search guns, ammo, mags, parts, items, extracts\n", None),
+        ("    Tab  /  Left Right ", "label"), ("cycle the type filter\n", None),
+        ("    Ctrl+1..0, y u i o p ", "label"), ("jump straight to a filter\n", None),
+        ("    Ctrl+Shift+Left Right ", "label"), ("reorder the filters\n", None),
+        ("    Up Down         ", "label"), ("move through results\n", None),
+        ("\n  going deeper (Enter)\n", "head"),
+        ("    on a gun        ", "label"), ("its attachment categories\n", None),
+        ("    on a category   ", "label"), ("the parts that fit, best ergo first\n", None),
+        ("    on a part       ", "label"), ("every weapon it goes on\n", None),
+        ("    on a weapon there ", "label"), ("that gun's categories - it loops\n", None),
+        ("    on an extract   ", "label"), ("the wiki map, zoomed out, exit marked\n", None),
+        ("\n  opening things\n", "head"),
+        ("    Ctrl+Enter      ", "label"), ("the wiki page\n", None),
+        ("    Ctrl+Shift+Enter ", "label"), ("the flea market price page\n", None),
+        ("\n  keeping track\n", "head"),
+        ("    Ctrl+H          ", "label"), ("mark as in your stash\n", None),
+        ("    Ctrl+D          ", "label"), ("mark as worth looking out for\n", None),
+        ("    F5              ", "label"), ("refresh prices, and TarkovTracker if connected\n", None),
+        ("\n  getting out\n", "head"),
+        ("    Esc             ", "label"), ("back one level, then hide\n", None),
+        ("    Backspace       ", "label"), ("same, when the box is empty\n", None),
+        ("    drag the top    ", "label"), ("move the window anywhere\n", None),
+        ("\n  prices\n", "head"),
+        ("    Flea prices refresh on their own, hourly at source.\n", "dim"),
+        ("    'not on the flea market' means banned, not missing.\n", "dim"),
+        ("    Value per slot is left off weapons - a built gun's size\n", "dim"),
+        ("    depends on its attachments.\n", "dim"),
+        ("\n  type :help any time to see this again\n", "dim"),
+    ]
+
     def _on_type(self, event=None) -> None:
         if event is not None and event.keysym in ("Up", "Down", "Return", "Escape",
                                                   "Tab", "ISO_Left_Tab"):
@@ -1047,6 +1089,11 @@ class Popover:
             self.part_entries = []
             self.fits_entries = []
         term = self.entry.get().strip()
+        if term.lower() in (":help", ":h", ":?"):
+            self.results = []
+            self.listbox.delete(0, "end")
+            self._set_detail(list(self.HELP))
+            return
         _label, kind, side = self.filters[self.filter_index]
         # An active filter with an empty box lists that whole category, so the
         # filter doubles as a way to browse.
@@ -1074,7 +1121,8 @@ class Popover:
             self._render(self.results[0]["id"])
         else:
             self._set_detail([("no matches\n", "dim")] if term else
-                             [("type a gun, round or magazine name\n", "dim")])
+                             [("type a gun, round, magazine or extract name\n", "dim"),
+                              ("or :help for the keys\n", "dim")])
 
     def _on_escape(self, event=None) -> str:
         """Escape backs out one level at a time, and only then hides."""
@@ -1161,6 +1209,68 @@ class Popover:
         if entry.get("kind") == "extract":
             return entry.get("short_name") or entry.get("name")
         return entry.get("name")
+
+    def _market_name(self) -> str | None:
+        """The item to price up. Extracts have no market page, so they opt out."""
+        if self.view != "search":
+            return (self._current_subject() or {}).get("name")
+        entry = self._current_result()
+        if not entry or entry.get("kind") == "extract":
+            return None
+        return entry.get("name")
+
+    def _open_market(self, event=None):
+        """Open the highlighted item's flea market page.
+
+        Reuses any tarkovforge tab rather than opening one per lookup - in a
+        raid this gets pressed repeatedly, and a pile of tabs is its own
+        problem.
+        """
+        from . import extracts as extracts_mod
+        from . import market as market_mod
+
+        name = (self._market_name() or "").replace("[DEMO] ", "").strip()
+        if not name:
+            return "break"
+        try:
+            url, exact = market_mod.url_for(self.conn, name)
+        except Exception as exc:
+            print(f"could not open the market: {exc}")
+            return "break"
+
+        if not exact and not self._has_flea_price():
+            # No page and no price means the item is not tradeable at all -
+            # a quest item, an ammo box, a piece of intel. Opening a market
+            # search for it would just show an empty table, so say why
+            # instead of hiding the window behind a dead end.
+            self._set_detail([
+                (f"{name}\n", "head"),
+                ("  no market page\n\n", "warn"),
+                ("This item is not traded on the flea market - quest items,\n"
+                 "ammo boxes and intel have no listing and no price.\n\n", "dim"),
+                ("Ctrl+Enter still opens it on the wiki.\n", "label"),
+            ])
+            return "break"
+
+        self.hide()
+        self.root.update_idletasks()
+        try:
+            extracts_mod.open_in_browser(url, reuse_title="TarkovForge")
+        except Exception as exc:
+            print(f"could not open the market: {exc}")
+        return "break"
+
+    def _has_flea_price(self) -> bool:
+        """Whether the highlighted item is traded at all."""
+        item_id = self._selected_item_id()
+        if not item_id:
+            return False
+        try:
+            return bool(self.conn.execute(
+                "SELECT 1 FROM flea_prices WHERE item_id = ?", (item_id,)
+            ).fetchone())
+        except Exception:
+            return False
 
     def _open_wiki(self, event=None):
         """Open the highlighted row's wiki article.

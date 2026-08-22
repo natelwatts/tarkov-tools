@@ -110,6 +110,22 @@ removed.
 **Items with no price are not missing** - they are the ones banned from the
 flea market, and the tool says so rather than showing a blank.
 
+### When an item has nothing
+
+Of 4,613 items, 3,379 have a market page and the rest split two ways, so
+Ctrl+Shift+Enter behaves differently depending on which:
+
+| | market page | flea price | what happens |
+|---|---|---|---|
+| 3,379 items | yes | either | opens the item's page |
+| 351 items | no | yes | opens the market search - it *is* tradeable, their site just has no page |
+| 883 items | no | no | says **"not traded on the flea market"** and stays put |
+
+That last case is quest items, ammo boxes and intel. Opening a market search
+for them would show an empty table, so the overlay explains why instead of
+hiding itself behind a dead end - and points out that Ctrl+Enter still opens
+the wiki, which does have something to say about them.
+
 **What is not here yet: which trader pays the most.** That needs per-trader
 sell prices, which only tarkov.dev has - tarkovforge reads them live from the
 same API rather than publishing them, and the raw item templates carry no
@@ -281,6 +297,13 @@ the one search bar with everything else.
 **Ctrl+Enter opens whatever is highlighted on the wiki** - a gun, a round, a
 magazine, a part, any item at all. An extract opens its map's article, since
 plain Enter already opens the interactive map on the exit itself.
+
+**Ctrl+Shift+Enter opens its flea market page** on tarkovforge, straight to
+the item rather than to a search box. Repeated presses reuse the one market
+tab instead of stacking up a dozen.
+
+**Type `:help`** in the search box for the full list of keys without leaving
+the overlay.
 
 The wiki does not always file an item under the name the game uses (the M4A1
 lives at *Colt M4A1 5.56x45 assault rifle*), so the title is confirmed through

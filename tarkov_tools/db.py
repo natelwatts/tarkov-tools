@@ -174,6 +174,12 @@ CREATE TABLE IF NOT EXISTS flea_prices (
 );
 CREATE INDEX IF NOT EXISTS idx_flea_price ON flea_prices(price);
 
+CREATE TABLE IF NOT EXISTS market_pages (
+    slug    TEXT PRIMARY KEY,
+    url     TEXT NOT NULL,
+    section TEXT
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -224,6 +230,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
             updated INTEGER
         );
         CREATE INDEX IF NOT EXISTS idx_flea_price ON flea_prices(price);
+        CREATE TABLE IF NOT EXISTS market_pages (
+            slug    TEXT PRIMARY KEY,
+            url     TEXT NOT NULL,
+            section TEXT
+        );
     """)
     conn.commit()
 

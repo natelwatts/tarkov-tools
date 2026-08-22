@@ -1,41 +1,34 @@
 # tarkov-tools
 
-Local helpers for Escape from Tarkov: automatic display gamma, and a
-hotkey-summoned search popover that answers *"what ammo, magazines and guns
-actually go together"* without alt-tabbing to the wiki.
+Two things for Escape from Tarkov, in one small Windows app:
 
-**Almost entirely the Python standard library. Managed with [uv](https://docs.astral.sh/uv/).**
+- **A search overlay.** Press `Ctrl+T` mid-raid and ask what ammo a gun takes,
+  what a round costs, which magazines fit, or where an extract is - without
+  alt-tabbing to the wiki.
+- **Automatic gamma.** Your brightness setting applies while Tarkov has focus,
+  and only on the monitor the game is on. Alt-tab to Discord and your desktop
+  looks normal again.
 
-The one dependency is `comtypes` (small, pure Python), used only to find an
-already-open Chrome tab. Everything else is stdlib, and the tool degrades
-gracefully if it is missing.
+```
+ search  m855a1
 
----
+ AMO  5.56x45mm M855A1        5.56x45mm M855A1
+ BOX  5.56x45mm ammo pack       flea 3,077 RUB/round   153,848 for 50
+ BOX  5.56x45mm ammo pack
+                                pen 44   dmg 49   armor dmg 47%   frag 44%
+                                Caliber556x45NATO   945.0 m/s
 
-## What this does and does not touch
+                                FIRED BY
+                                  ADAR 2-15 5.56x45 carbine    ergo 48  rec 120
+                                  Colt M4A1 5.56x45            ergo 48  rec 119
+                                  HK 416A5 5.56x45             ergo 51  rec 125
+```
 
-Nothing here reads, writes, or attaches to the game process.
-
-| Component | How it works |
-|---|---|
-| Gamma | `SetDeviceGammaRamp` against a per-display device context. Same thing the NVIDIA Control Panel slider does. |
-| Database | HTTP requests to a public API or a published template dump, cached into local SQLite. Read-only, and never during a raid. |
-| Popover | An ordinary always-on-top window, like Notepad. No injection, no graphics-API hooking. |
-| Hotkey | `RegisterHotKey`, which asks Windows to route one specific combination to us. Not a keyboard hook - it cannot see any other keystroke. |
-| Focus | Reads the foreground window's title/class and executable *name* only, to know whether the game is in front. |
-
-There is no DLL injection, no `Present`/`vkQueuePresentKHR` hooking, and no
-handle opened against the game beyond `PROCESS_QUERY_LIMITED_INFORMATION` to
-read an executable *name* for focus detection.
-
-That said: BSG has never affirmatively blessed this category of tool. Their
-only official statement prohibits software that replaces, overrides, or
-modifies game files or memory - none of which this does - but "not prohibited"
-is not the same as "approved". Use your own judgement.
+Everything runs locally. There is no account to make and no API key to get.
 
 ---
 
-## Quick start
+## Getting started
 
 You need **Windows**, [uv](https://docs.astral.sh/uv/getting-started/installation/),
 and **Chrome** if you want the wiki and map features. Python itself comes from
@@ -44,317 +37,174 @@ uv, so there is nothing else to install.
 ```powershell
 git clone git@github.com:natelwatts/tarkov-tools.git
 cd tarkov-tools
-uv sync                                          # creates .venv, no dependencies to fetch
-uv run tarkov-tools import-templates --download  # build the item database
-uv run tarkov-tools                              # start everything
+uv sync
+uv run tarkov-tools
 ```
 
-That last command runs **both tools in one process**: the gamma watcher and
-the search popover. Ctrl-C (or closing the window) stops both and restores
-your gamma. `scripts\tarkov-tools.cmd` does the same by double-click.
+The first run downloads the game's item data and builds a local database.
+That takes a minute and happens once; every run after it starts straight
+away. After that you have both tools running: press `Ctrl+T` any time to
+search, and gamma follows the game.
 
-`tt` is a shorter alias for `tarkov-tools`.
+Ctrl-C in the terminal, or `:q!` in the overlay, stops both and restores your
+gamma. `scripts\tarkov-tools.cmd` starts it by double-click instead.
 
-| Command | What it does |
-|---|---|
-| `uv run tarkov-tools` | gamma watcher + popover together (same as `start`) |
-| `uv run tarkov-tools start 1.6` | same, overriding the gamma value |
-| `uv run tarkov-tools gamma watch` | gamma only |
-| `uv run tarkov-tools popover` | popover only |
-| `uv run tarkov-tools search m995` | one-off lookup in the terminal |
-| `uv run tarkov-tools ammo` | penetration chart |
-| `uv run tarkov-tools prices update` | pull current flea market prices |
-| `uv run tarkov-tools extract zb-1011` | open the interactive map on that extract |
-| `uv run tarkov-tools hotkey ctrl+alt+k` | rebind the popover hotkey |
-| `uv run tarkov-tools import-templates --download` | rebuild the database |
-
-**Every command explains itself** - `uv run tarkov-tools <command> --help` has
-a description and worked examples, and `uv run tarkov-tools --help` lists them
-all.
+> Tarkov must be in **borderless windowed** mode for the overlay to appear on
+> top of it. Exclusive fullscreen will not composite another window over the
+> game.
 
 ---
 
-## Flea market prices
+## Using the overlay
+
+Press `Ctrl+T` and start typing. The box always has the keyboard - there is no
+mode to be in, and no command to learn first.
+
+- Search a **gun** and you get every round it fires sorted by penetration,
+  every magazine that fits sorted by capacity, and which traders sell it.
+- Search a **round** and you get every gun that fires it and every magazine
+  that holds it.
+- Search a **part** and you get its ergonomics, recoil, accuracy and loudness,
+  plus every weapon it goes on.
+- Search an **extract** and you get its side, chance, timer, requirement and
+  which spawns reach it.
+
+Every result is tagged `GUN` `AMO` `MAG` `PRT` `GEAR` `MED` `KEY` `EXT` and so
+on, so extraction points share the one search bar with everything else.
+
+### The keys
+
+| key | does |
+|---|---|
+| `Up` `Down` | next row, previous row |
+| `Ctrl+j` `Ctrl+k` | the same, without leaving the home row |
+| `Enter` | open what's highlighted |
+| `Esc` / `Backspace` | back a level, or clear the search box at the top |
+| `Tab` / `Left` `Right` | switch filter |
+| `Ctrl+h` `Ctrl+l` | switch filter, whatever the arrows are set to |
+| `Ctrl+1`-`0`, `y`-`p` | jump straight to a filter |
+| `Ctrl+Enter` | open it on the wiki |
+| `Ctrl+Shift+Enter` | open its flea market page |
+| `F5` | refresh prices, and quest progress if connected |
+| `:help` | every key, without leaving the overlay |
+| `:q` | close the window, everything keeps running |
+| `:q!` | quit properly - stops the gamma watcher and restores gamma |
+
+`Ctrl` + `hjkl` moves as well as the arrows do: `j`/`k` down and up the rows,
+`h`/`l` left and right along the filters. It is not a mode - nothing is
+switched on, and the box is still taking letters.
+
+**Nothing but `:q` closes the window.** `Esc` at the top level clears whatever
+you typed; press it again on an empty box and it says so and stays put, rather
+than dismissing what you were reading. Your hotkey still toggles it.
+
+The line along the bottom shows only the keys that apply to where you are.
+
+### Going deeper with Enter
+
+`Enter` opens whatever is highlighted, and you can keep going:
+
+- **On a gun** - Ammo first, then its attachment categories. Ammo leads
+  because "what do I feed it, and what does that cost" is the question a gun
+  raises in a raid; which foregrip fits is not.
+- **On Ammo** - every round it fires, hardest-hitting first, each priced.
+- **On a category** - the parts that fit, best ergonomics first.
+- **On a part** - every weapon it goes on. Enter one of those and you are in
+  *its* categories, so you can follow a part onto a gun and straight into what
+  else that gun takes.
+- **On an extract** - the interactive wiki map, zoomed out, with that exit
+  marked.
+
+`Esc` backs out one level at a time, however deep you went. Typing abandons
+the trail and searches again.
+
+### Filters
+
+`Tab` cycles the filter chips along the top, or jump straight to one with
+`Ctrl` + the key printed on the chip. With the box empty, a filter lists that
+whole category - `Tab` to `Ammo` for the full penetration chart, or
+`Exfil Scav` for every Scav extract.
+
+```
+All | Guns | Ammo | Mags | Parts | Gear | Meds | Keys | Barter
+    | Needed | Have | Watch | Extracts | Exfil PMC | Exfil Scav | Exfil Co-op
+```
+
+`Ctrl+Shift+Left/Right` slides the active chip along the bar, and the order is
+remembered - so whatever you put first is always `Ctrl+1`.
+
+Leave the box empty on **All** and it lists what you looked up recently.
+`Enter` runs one again, `Ctrl+Del` forgets it.
+
+### Moving the window
+
+The overlay has no title bar, so the strip across the top stands in for one:
+anywhere along it drags the window, and so do the search row and the bottom
+hint bar. Double-click any of them to snap back to the centre. Where you put
+it is remembered.
+
+---
+
+## Prices
 
 Search anything and the detail pane leads with what it sells for, what that
 works out to **per inventory slot**, and which way the price has moved:
 
 ```
 Salewa first aid kit
-  flea 37,972 RUB   18,986/slot (2 slots)   +1%
+  flea 38,893 RUB   19,446/slot (2 slots)   +4%
 ```
 
 Per slot is the number that decides what comes home - a 200k item filling six
-slots loses to a 90k item filling one. It is left off weapons on purpose: a
-built gun's footprint depends on what is bolted to it, so the item template's
-size would make that number confidently wrong.
+slots loses to a 90k item filling one. It is deliberately left off weapons: a
+built gun's footprint depends on what is bolted to it.
 
-```powershell
-uv run tarkov-tools prices update      # pull the latest snapshot
-uv run tarkov-tools prices top         # best value per slot
-uv run tarkov-tools prices             # how fresh is what I have?
+Ammo is priced **by the box**, because that is how the flea trades it:
+
+```
+5.56x45mm M855A1
+  flea 3,077 RUB/round   153,848 for 50
 ```
 
-The popover refreshes prices by itself when it starts and whenever you press
-F5, so what you see mid-raid is current to the hour without touching a
+Prices refresh by themselves when the overlay starts, and whenever you press
+`F5`, so what you see mid-raid is current to the hour without touching a
 terminal.
 
-**Where the numbers come from.** tarkov.dev's GraphQL API is the community's
-canonical price source and has been returning *"GraphQL server unavailable"*.
-So prices come from [tarkovforge](https://tarkovforge.com/market)'s public
-snapshot instead - one static JSON file, refreshed hourly, keyed by the same
-BSG item ids this database already uses, so it joins straight on with no name
-matching. It is derived from tarkov.dev, so it is the same data one step
-removed.
-
-**Items with no price are not missing** - they are the ones banned from the
-flea market, and the tool says so rather than showing a blank.
-
-### Ammo is priced by the box
-
-The snapshot has **no entry for a single round** - 0 of 208 - because the flea
-does not trade them. It trades ammo packs, and covers 82% of those. So a
-round's price is worked back from the cheapest pack it is sold in:
-
-```
-5.56x45mm M855A1   [ammo]
-  flea 2,690 RUB/round   (134,484 for 50)
-```
-
-The pack contents come from the item templates
-(`StackSlots[0]` names the round and holds a `_max_count`), which links 213
-boxes and gives **143 of 208 rounds a price**. The rest - M995, SSA AP and
-friends - genuinely cannot be traded, and say so.
-
-### When an item has nothing
-
-Of 4,613 items, 3,379 have a market page and the rest split two ways, so
-Ctrl+Shift+Enter behaves differently depending on which:
-
-| | market page | flea price | what happens |
-|---|---|---|---|
-| 3,379 items | yes | either | opens the item's page |
-| 351 items | no | yes | opens the market search - it *is* tradeable, their site just has no page |
-| 883 items | no | no | says **"not traded on the flea market"** and stays put |
-
-That last case is quest items, ammo boxes and intel. Opening a market search
-for them would show an empty table, so the overlay explains why instead of
-hiding itself behind a dead end - and points out that Ctrl+Enter still opens
-the wiki, which does have something to say about them.
-
-**What is not here yet: which trader pays the most.** That needs per-trader
-sell prices, which only tarkov.dev has - tarkovforge reads them live from the
-same API rather than publishing them, and the raw item templates carry no
-prices at all. The display for it is already written; run
-`uv run tarkov-tools sync` once that API is back and trader prices appear on
-their own.
+**An item with no price is not missing** - it is banned from the flea market,
+and the tool says so rather than showing a blank. M995 and friends genuinely
+cannot be traded.
 
 ---
 
-## Building the database
+## Your stash and watch lists
 
-There are two independent ways to build it. Neither needs an API key.
-
-### Option A - raw game templates (recommended, no API)
-
-```powershell
-uv run tarkov-tools import-templates --download
-```
-
-Downloads a dump of the game's own item template database (~18 MB) plus the
-English locale file (~2.9 MB) and imports in about a second. This is the
-authoritative source: penetration, damage, ergonomics, magazine capacity and
-the entire compatibility graph are the game's real numbers.
-
-It carries **no market prices** - those do not exist in the game files.
-
-### Option B - the tarkov.dev API
-
-```powershell
-uv run tarkov-tools sync
-```
-
-Same static data, plus flea prices and trader offers.
-
-> **If sync fails with `GraphQL server unavailable` / HTTP 422**, that is an
-> outage on their side, not an auth problem - their Cloudflare Worker cannot
-> reach its data backend. Auth failures would be 401/403. Retry later; the
-> client already backs off and retries five times.
-
-The two are designed to coexist. A template import never touches the price
-columns, so you can refresh static data offline and layer prices on top with
-`sync` whenever the API is reachable.
-
----
-
-## Gamma
-
-Applies your chosen gamma **only while Tarkov has focus**, and only on the
-monitor the game window is on. The original ramp is always restored on exit -
-via `finally`, `atexit`, and `SIGINT`/`SIGTERM` handlers - so a crash cannot
-leave your desktop washed out.
-
-```powershell
-uv run tarkov-tools gamma watch      # the one you want running
-uv run tarkov-tools gamma set 1.5    # apply right now
-uv run tarkov-tools gamma reset      # back to neutral
-uv run tarkov-tools gamma displays   # list monitors + current state
-```
-
-Or run `uv run tarkov-tools` to start it alongside the popover.
-
-Focus-triggered rather than launch-triggered on purpose: alt-tabbing to
-Discord shouldn't leave your desktop blown out.
-
-**On clamping.** Windows limits how far a gamma ramp may deviate from linear.
-Gamma 1.5 sits comfortably inside the default limit and applies fine. If you
-want something more extreme, run this once from an Administrator shell and
-sign out and back in:
-
-```powershell
-uv run tarkov-tools gamma --unlock-range
-```
-
----
-
-## Search
-
-```powershell
-uv run tarkov-tools search m995        # full detail
-uv run tarkov-tools search stanag --list
-uv run tarkov-tools ammo               # penetration chart, all calibers
-uv run tarkov-tools ammo Caliber556x45NATO
-uv run tarkov-tools ammo --list-calibers
-```
-
-### The popover
-
-```powershell
-uv run tarkov-tools popover
-```
-
-Press **Ctrl+T** (configurable) any time - including in game - and a search
-box appears. Type, arrow through results, Esc to dismiss.
-
-**Moving it.** The window has no system title bar, so there is a title strip
-across the top that stands in for one: **anywhere along that strip drags the
-window**. The search row and the bottom hint bar work too. Double-click any
-of them to snap back to the centre.
-
-The position is remembered in `config.local.json` and restored next time. It
-is clamped to the virtual desktop on both drag and load, so it cannot be lost
-off-screen - including on a multi-monitor setup where the second display sits
-at negative coordinates. If a saved position is somehow unreachable it is
-pulled back into view automatically.
-
-The gamma watcher recognises this window by title *and* window class, so
-summoning the popover does not read as "you left the game": the gamma stays
-applied, and stays on the monitor the **game** is on rather than following
-the popover.
-
-#### Rebinding
-
-```powershell
-uv run tarkov-tools hotkey                  # show the current binding
-uv run tarkov-tools hotkey ctrl+alt+k       # change it
-```
-
-The new combination is registered for real before it is saved, so a clash
-with another application is reported immediately rather than silently
-failing the next time the popover starts. The setting is written to
-`config.local.json`, which is gitignored, so personal bindings are never
-committed and survive updates to the shipped defaults.
-
-Accepted forms: `ctrl+t`, `ctrl + t`, `f9`, `ctrl+shift+space`, `win+k`.
-Modifiers may be side-specific - `rctrl+t` fires only on the RIGHT Ctrl,
-done by checking that one key's state when the hotkey fires rather than by
-installing a keyboard hook. `--hotkey` overrides for a single run without
-saving.
-
-> A registered hotkey is claimed system-wide, so while the popover is running
-> **the combination stops reaching other applications**. Ctrl+T is "new tab"
-> in every browser, so expect that to stop working until you exit. `ctrl+alt+t`
-> or `ctrl+shift+space` are far less contested if that becomes annoying.
-
-- Search a **gun** → every compatible round sorted by penetration, every
-  magazine that fits sorted by capacity, and which traders sell it
-- Search a **round** → every gun that fires it and every magazine that holds it
-- Search a **magazine** → what it accepts and what accepts it
-- **Enter on a gun** → **Ammo first**, then its attachment categories. Ammo
-  leads because "what do I feed it, and what does that cost" is the question
-  a gun raises in a raid; which foregrip fits is not.
-- **Enter on Ammo** → every round it fires, hardest-hitting first, each with
-  a price per round. Walk them, mark them, open one on the wiki.
-- **Enter on a category** → those parts as rows of their own, so you can walk
-  them one at a time, mark them, or open one on the wiki.
-- **Enter on a part** → every weapon it fits, as rows. The detail pane only
-  has room for the first handful, and a common part fits dozens.
-- Enter on one of those weapons opens *its* categories, so you can follow a
-  part onto a gun and straight into what else that gun takes.
-
-**Esc backs out one level at a time**, however deep you went, and hides the
-window once you are back at the results. Typing abandons the whole trail and
-searches again.
-- Search a **part** → its ergo/recoil/accuracy/loudness and every weapon it
-  fits on, however many levels up that is.
-
-### Getting around
-
-The search box always has the keyboard - type and it searches, with no mode to
-be in.
+Mark things you own, and things you want to pick up. Both lists are yours
+alone and live in the local database.
 
 | key | does |
 |---|---|
-| `Up` `Down` | next row, previous row |
-| `Enter` | open what's highlighted |
-| `Esc` / `Backspace` | back a level - **never closes the window** |
-| `Tab` / `Left` `Right` | switch filter |
-| `Ctrl+1`-`0`, `y`-`p` | jump straight to a filter |
-| `:q` | close the window, everything keeps running |
-| `:q!` | quit properly - stops the gamma watcher and restores gamma |
+| `Ctrl+S` | put the highlighted item on your **Have** list, or take it off |
+| `Ctrl+Shift+S` | say how many you have - `Enter` saves, `0` removes |
+| `Ctrl+Up` `Ctrl+Down` | that count, one up or one down |
+| `Ctrl+Del` | straight off the list, whatever the count |
+| `Ctrl+D` | put it on your **Watch** list, or take it off |
 
-**Nothing but `:q` closes the window.** `Esc` at the top level says so and
-stays put, rather than dismissing what you were reading. Your hotkey still
-toggles it as it always has.
+Marked items carry a star (`★`) or a diamond (`◆`) everywhere they appear,
+including inside a gun's parts list - so browsing a build shows at a glance
+which pieces you already own. Counts show up beside the star:
+`★12 LEDX Skin Transilluminator`.
 
-The line along the bottom shows only the keys that apply to where you are, and
-changes as you browse deeper. The full set is always `:help`.
-
-### Recent searches
-
-Leave the box empty on the **All** filter and it lists what you looked up
-recently - `Enter` runs one again, `Ctrl+Del` forgets it. Terms are recorded
-when you actually *open* a result, not on every keystroke, so the list holds
-`ledx` rather than `l`, `le`, `led`, `ledx`.
-
-### Your own lists
-
-**Ctrl+H** marks something as in your stash, **Ctrl+D** as worth looking out
-for. Marked items carry a star or diamond everywhere they appear - including
-in a gun's parts list, so browsing a build shows at a glance which pieces you
-already own. Each list gets its own Tab filter once it holds something.
-
-### How many you have
-
-**Ctrl+Shift+H** turns the search box into *"how many do you have?"* - type a
-number, Enter saves it, `0` removes the item, Esc cancels and gives you your
-search back. **Ctrl+Up / Ctrl+Down** nudge the count by one without leaving
-the results, for when you pick up one more of something.
-
-**Ctrl+Del removes** whatever is highlighted from your stash outright.
-
-Counts show up next to the star everywhere - `★12 LEDX Skin Transilluminator`
-- and the **Have filter lists everything you hold, most valuable pile first**,
-with a running total and the editing keys underneath. Any item you hold spells
-the keys out in its own detail pane, so you never have to remember them:
+**To see a whole list**, `Tab` round to its chip. A **Have** chip appears in
+the filter bar as soon as you hold something, and lists everything you own,
+most valuable pile first, with a running total:
 
 ```
 LEDX Skin Transilluminator
   ★ in your stash x4
-    Ctrl+Shift+H change count   Ctrl+Up/Down +1/-1   Ctrl+Del remove
+    Ctrl+Shift+S change count   Ctrl+Up/Down +1/-1   Ctrl+Del remove
 ```
 
-From a terminal:
+The same from a terminal:
 
 ```powershell
 uv run tarkov-tools stash              # everything, with totals
@@ -365,252 +215,218 @@ uv run tarkov-tools stash --clear      # empty the list
 
 ```
  qty         each         total  item
-   3      583,680     1,751,040  LEDX Skin Transilluminator
-   5       38,250       191,250  Salewa first aid kit
+   3      573,044     1,719,132  LEDX Skin Transilluminator
+   5       38,893       194,465  Salewa first aid kit
 
-2 kinds, 8 items, 1,942,290 RUB at flea prices
+2 kinds, 8 items, 1,913,597 RUB at flea prices
 ```
-
-Totals use the flea snapshot, and items banned from the flea count as zero
-rather than being quietly dropped from the list.
-
-The lists live in their own table, so re-importing templates or re-syncing an
-account never disturbs them.
-- Search an **extract** → side, chance, exfil timer, requirement and which
-  spawns reach it. **Enter opens the interactive map on it.**
-
-Results are tagged `GUN` / `AMO` / `MAG` / `EXT`, so extraction points share
-the one search bar with everything else.
-
-**Ctrl+Enter opens whatever is highlighted on the wiki** - a gun, a round, a
-magazine, a part, any item at all. An extract opens its map's article, since
-plain Enter already opens the interactive map on the exit itself.
-
-**Ctrl+Shift+Enter opens its flea market page** on tarkovforge, straight to
-the item rather than to a search box. Repeated presses reuse the one market
-tab instead of stacking up a dozen.
-
-**Type `:help`** in the search box for the full list of keys without leaving
-the overlay.
-
-The wiki does not always file an item under the name the game uses (the M4A1
-lives at *Colt M4A1 5.56x45 assault rifle*), so the title is confirmed through
-the wiki's API before the tab opens, and anything with no article at all lands
-on a search instead of an empty page.
-
-**Tab cycles a filter**, or jump straight to one with **Ctrl+<key>**. Keys run
-`1 2 3 4 5 6 7 8 9 0` then `y u i o p`, the way browser tabs number themselves,
-and each chip shows its own key. Shift+Tab steps back, and clicking a chip
-works too.
-
-**Ctrl+Shift+Left/Right** slides the active chip along the bar. The order is
-saved to `config.local.json` and the keys follow the order, so whatever you
-put first is always Ctrl+1.
-
-The window sizes itself to fit the whole filter bar, growing as filters appear
-and shrinking back when they go. Set `search.width` in `config.json` to pin it
-to a fixed pixel width instead.
-
-```
-All | Guns | Ammo | Mags | Parts | Gear | Meds | Keys | Barter
-    | Needed | Have | Watch | Extracts | Exfil PMC | Exfil Scav | Exfil Co-op
-```
-
-Every result carries a type tag - `GUN` `AMO` `MAG` `PRT` `GEAR` `MED` `KEY`
-`BART` `FOOD` `NADE` `BOX` `CONT` `BLDE` `MAP` `CASH` `EXT` - because every
-item is classified at import by its position in the game's category tree.
-
-With the box empty, a filter lists that whole category - Tab to `Ammo` for the
-full penetration chart, or `Exfil Scav` for all 62 Scav extracts. Sorted
-sensibly per category: ammo by caliber then penetration, mags by capacity.
-
-> Requires Tarkov in **borderless windowed** mode. Exclusive fullscreen will
-> not composite another window on top.
 
 ---
 
-## Quest and hideout needs (entirely optional)
+## The wiki and the map
 
-**Skip this and everything else still works.** With no TarkovTracker account
-the `Needed` filter is not offered at all, no quest data is fetched, and the
-database never even gains the table. Gamma, guns, ammo, magazines and extracts
-are unaffected.
+`Ctrl+Enter` opens whatever is highlighted **on the wiki** - a gun, a round, a
+part, any item at all. The wiki does not always file an item under the name
+the game uses (the M4A1 lives at *Colt M4A1 5.56x45 assault rifle*), so the
+title is confirmed before the tab opens, and anything with no article lands on
+a search rather than an empty page.
 
-Connect a [TarkovTracker](https://tarkovtracker.org/) account and every item
-shows what still wants it:
+`Ctrl+Shift+Enter` opens its **flea market page**, straight to the item.
+Repeated presses reuse the one market tab instead of stacking up a dozen.
+
+`Enter` on an extract opens the **interactive map** with that exit marked and
+the view pulled back so you can see where it actually is. From a terminal:
+
+```powershell
+uv run tarkov-tools extract zb-1011
+```
+
+---
+
+## Quest and hideout needs (optional)
+
+**Skip this and everything else still works.** With no
+[TarkovTracker](https://tarkovtracker.org/) account the `Needed` filter is not
+offered at all and no quest data is ever fetched.
+
+Connect one and every item shows what still wants it:
 
 ```
 Bundle of wires
+  flea 26,756 RUB   26,756/slot   -7%
+
   STILL NEEDED
      10x FIR  Fertilizers
+      2x      Defective Wall level 6
      15x      Generator level 2
      10x      Heating level 3
 ```
 
 ```powershell
-uv run tarkov-tools tracker login --token PVP_xxxxx   # or $env:TARKOVTRACKER_TOKEN
+uv run tarkov-tools tracker login --token PVP_xxxxx
 uv run tarkov-tools tracker sync                      # after playing
 uv run tarkov-tools tracker needed                    # the shopping list
 ```
 
-Tab to the **Needed** filter for everything outstanding, largest shortfall
+`Tab` to the **Needed** filter for everything outstanding, largest shortfall
 first, with anything gated behind an unmet prerequisite marked `(locked)`.
+`F5` in the overlay re-syncs without leaving the game.
 
-**Press F5 in the popover** (or Ctrl+R) to re-sync without leaving the game.
-It runs on a worker thread so the window stays usable, reports each stage as
-it goes, and the `Needed` filter appears the moment a first sync completes.
-
-**How it works.** The progress API returns only ids and completion flags - no
-item names and no quantities remaining - so what you still need is computed by
-joining your progress against TarkovTracker's task and hideout definitions,
-which they serve publicly with no authentication. Those same public feeds are
-a live substitute for the parts of tarkov.dev that are down.
-
-Notes:
-
-- **Read-only.** Only the `GP` permission is used; nothing writes to your
-  account even if your token also carries `WP`.
-- The token lives in `config.local.json`, which is gitignored, and is only
-  ever displayed masked. `tracker logout` clears it.
-- The prefix fixes the game mode: a `PVE_` token reads only PVE progress. A
-  mismatch is a 401, which `tracker login` reports immediately.
-- Currency is excluded - "you need 18,222,000 Roubles" is not a shopping list.
-- Objectives that accept any of a wide list ("any of 56 medicine items") are
-  kept off the shopping list but still shown on the item itself.
-- Free tier allows 1,000 reads/day, so sync after a session rather than
-  continuously.
+The token is read-only, stored locally, and never displayed unmasked.
+`tracker logout` clears it.
 
 ---
 
-## Where the data comes from
+## Gamma
 
-Two different kinds of data, with very different sources and lifetimes:
+Your chosen gamma applies **only while Tarkov has focus**, and only on the
+monitor the game window is on. The original setting is always restored on the
+way out, so a crash cannot leave your desktop washed out.
 
-- **Static stats** (penetration, damage, ergonomics, magazine capacity, and
-  crucially the compatibility lists) originate in the game's own item
-  templates. They are the game's real numbers, not community measurements,
-  and they only change when the game patches.
-- **Flea prices** come from tarkov.dev's closed-source scanners, which page
-  through live market listings. This is the only part that needs a live feed.
+Running `uv run tarkov-tools` starts this alongside the overlay. On its own:
 
-The compatibility graph this project is built around, and where each edge
-comes from in the raw template format:
-
-```
-weapon._props.Chambers[]._props.filters[].Filter          -> weapon accepts ammo
-weapon._props.Slots[_name=mod_magazine].filters[].Filter  -> weapon accepts magazine
-magazine._props.Cartridges[]._props.filters[].Filter      -> magazine accepts ammo
+```powershell
+uv run tarkov-tools gamma watch      # the one you want running
+uv run tarkov-tools gamma set 1.5    # apply right now
+uv run tarkov-tools gamma reset      # back to neutral
+uv run tarkov-tools gamma displays   # list monitors + current state
 ```
 
-All three edges come straight from the item templates, so "what fits what" is
-authoritative rather than inferred. Items are classified by walking the
-`_parent` chain to a root category (Weapon `5422acb9...`, Ammo `5485a868...`,
-Magazine `5448bc23...`), which picks up every subcategory automatically.
+Change the default in `config.json` (`"gamma": { "value": 1.5 }`), or pass one
+for a single run with `uv run tarkov-tools start 1.6`.
 
-Templates only carry internal names such as `patron_556x45_M995`; display
-names live in a separate locale file keyed `"<id> Name"`, which is why the
-importer wants both files.
+Summoning the overlay does not count as leaving the game - gamma stays applied
+and stays on the game's monitor.
 
-### Changing the template source
+---
 
-Any dump in the raw BSG format works. Point `config.json` somewhere else if
-the default mirror goes stale:
+## All the commands
+
+`tt` is a shorter alias for `tarkov-tools`, and **every command explains
+itself** with `--help`.
+
+| Command | What it does |
+|---|---|
+| `uv run tarkov-tools` | gamma watcher + overlay together |
+| `uv run tarkov-tools start 1.6` | same, overriding the gamma value |
+| `uv run tarkov-tools popover` | overlay only |
+| `uv run tarkov-tools gamma watch` | gamma only |
+| `uv run tarkov-tools search m995` | one-off lookup in the terminal |
+| `uv run tarkov-tools ammo` | penetration chart, all calibers |
+| `uv run tarkov-tools stash` | what you have and what it is worth |
+| `uv run tarkov-tools prices update` | pull the latest flea snapshot |
+| `uv run tarkov-tools extract zb-1011` | open the map on that extract |
+| `uv run tarkov-tools tracker sync` | refresh quest progress |
+| `uv run tarkov-tools hotkey ctrl+alt+k` | rebind the overlay hotkey |
+| `uv run tarkov-tools import-templates --download` | rebuild the item database |
+
+---
+
+## Settings
+
+`config.json` is written on first run. Anything machine-specific - your
+hotkey, window position, token - goes in `config.local.json`, which is never
+committed.
 
 ```jsonc
-"templates": {
-  "items_url":  "https://.../database/templates/items.json",
-  "locale_url": "https://.../database/locales/global/en.json"
+{
+  "gamma":  { "value": 1.5, "game_monitor_only": true },
+  "search": { "hotkey": "ctrl+t",
+              "arrow_keys_switch_filters": "always" }
 }
 ```
 
-Or import files you already have on disk:
+Useful ones:
+
+| setting | what it does |
+|---|---|
+| `gamma.value` | how bright, while the game has focus |
+| `gamma.game_monitor_only` | leave your other monitors alone |
+| `search.hotkey` | what summons the overlay |
+| `search.arrow_keys_switch_filters` | `always`, `edges` (only when the caret can't move), or `never` |
+| `search.width` | pin the overlay to a fixed width instead of fitting the filter bar |
+
+### Rebinding the hotkey
 
 ```powershell
-uv run tarkov-tools import-templates --items path\to\items.json --locale path\to\en.json
+uv run tarkov-tools hotkey                  # show the current binding
+uv run tarkov-tools hotkey ctrl+alt+k       # change it
 ```
 
-SPT (Single Player Tarkov) maintains the canonical dump, but at time of
-writing its GitHub mirror keeps `items.json` behind git-lfs with an exhausted
-LFS budget, and its own Gitea returns 410 - hence the plain-blob mirror in the
-default config.
+Accepted forms: `ctrl+t`, `f9`, `ctrl+shift+space`, `win+k`. Modifiers can be
+side-specific - `rctrl+t` fires only on the right Ctrl. The new combination is
+registered for real before it is saved, so a clash is reported immediately
+rather than failing silently next time.
+
+> A hotkey is claimed system-wide, so while the overlay runs **that
+> combination stops reaching other applications**. `Ctrl+T` is "new tab" in
+> every browser, so expect that to stop working until you exit. `ctrl+alt+t`
+> or `ctrl+shift+space` are far less contested.
 
 ---
 
-## Demo data
+## If something goes wrong
 
-`scripts/make_demo_data.py` writes a small synthetic dataset in the exact shape
-the API returns, so the code can be exercised while tarkov.dev is down.
+**The overlay doesn't appear over the game.** Tarkov has to be in borderless
+windowed mode. Exclusive fullscreen cannot composite another window on top.
 
-**Every demo item is named `[DEMO] ...` and every stat in it is invented.**
-Run a real `sync` to replace it with authoritative values.
+**`Ctrl+T` does nothing.** Something else has claimed it. Pick another with
+`uv run tarkov-tools hotkey ctrl+alt+k`.
+
+**Searches find nothing at all.** The item database is empty - rebuild it with
+`uv run tarkov-tools import-templates --download`.
+
+**Prices are missing or stale.** `uv run tarkov-tools prices update`, or `F5`
+in the overlay. Items banned from the flea have no price by definition.
+
+**Gamma won't go far enough.** Windows limits how far a gamma ramp may deviate
+from linear. Run this once from an Administrator shell, then sign out and back
+in:
 
 ```powershell
-uv run python scripts\make_demo_data.py
-uv run tarkov-tools sync --cache
+uv run tarkov-tools gamma --unlock-range
 ```
 
 ---
 
-## Sharing this with someone
+## Is this safe to run?
 
-A `git clone` (or `scripts\make-share-zip.cmd`, which uses `git archive`) is
-safe: it carries tracked files only.
+Nothing here reads, writes, or attaches to the game process. The gamma control
+is the same Windows call the NVIDIA Control Panel slider makes; the overlay is
+an ordinary always-on-top window, like Notepad; the hotkey is registered with
+Windows rather than hooked, so it cannot see any other keystroke. Nothing is
+injected, and no game files or memory are touched.
+
+That said: BSG has never affirmatively blessed this category of tool. Their
+only official statement prohibits software that replaces, overrides, or
+modifies game files or memory - none of which this does - but "not prohibited"
+is not the same as "approved". Use your own judgement.
+
+[The development notes](docs/development.md) spell out exactly which Windows
+calls are involved.
+
+---
+
+## Sharing it with someone
+
+A `git clone`, or `scripts\make-share-zip.cmd`, carries tracked files only.
 
 > **Do not zip the folder by hand.** That would include `config.local.json`,
-> which holds your TarkovTracker token, and `data\`, which holds your
-> database. Both are gitignored precisely so they never travel.
+> which holds your TarkovTracker token, and `data\`, which holds your database
+> and your stash list. Both are gitignored precisely so they never travel.
 
 What the other person runs:
 
 ```powershell
 uv sync
-uv run tarkov-tools import-templates --download
 uv run tarkov-tools
 ```
 
-No account, no token, no API key. They get gamma, the search popover, the
-full compatibility graph and the extract maps. If they later want quest
-tracking they can add their own token; if they never do, nothing prompts them
-about it.
+No account, no token, no API key. They get gamma, the search overlay, the full
+compatibility graph and the extract maps.
 
 ---
 
-## Configuration
-
-`config.json` is generated on first run. Machine-specific overrides go in
-`config.local.json`, which is gitignored and merged on top.
-
-```jsonc
-{
-  "gamma":  { "value": 1.5, "exes": ["EscapeFromTarkov.exe"],
-              "game_monitor_only": true },
-  "api":    { "game_mode": "regular" },      // or "pve" - prices differ
-  "search": { "hotkey": "ctrl+t" }
-}
-```
-
----
-
-## Layout
-
-```
-tarkov_tools/
-  winapi.py    per-display gamma DCs, foreground process, monitor lookup
-  gamma.py     ramp maths + focus watcher with guaranteed restore
-  api.py       tarkov.dev GraphQL client, retry/backoff, response cache
-  templates.py raw BSG item-template importer (no API required)
-  db.py        SQLite schema, upserts, FTS5 index
-  ingest.py    API -> database, builds the compatibility graph
-  search.py    search + relationship queries
-  hotkey.py    RegisterHotKey listener on its own message loop
-  popover.py   tkinter search window
-  cli.py       entry point ('start' runs gamma + popover in one process)
-```
-
-## Not built yet
-
-The extract-map overlay: read the map name from the game's own log files
-(`%LOCALAPPDATA%\Battlestate Games\EscapeFromTarkov\Logs`), OCR the extract
-panel, fuzzy-match against the known extract list for that map, and draw the
-tarkov.dev SVG with your extracts highlighted. The map SVGs and the
-world-to-pixel transforms are already published.
+Working on the code? See [docs/development.md](docs/development.md) for where
+the data comes from, how the compatibility graph is built, and the module
+layout.

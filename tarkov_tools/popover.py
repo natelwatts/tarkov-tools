@@ -296,6 +296,9 @@ class Popover:
         self.qty_prev_term = ""
 
         self.status_note = ''
+        # What the box held the last time the results were built, so a
+        # keystroke that changed nothing can be told from one that did.
+        self._last_term: str | None = None
         self._refresh_marks()
         self._build()
         threading.Thread(target=self._price_worker, daemon=True).start()
@@ -373,16 +376,26 @@ class Popover:
         self.entry.bind("<Control-Shift-Return>", self._open_market)
         self.entry.bind("<Escape>", self._on_escape)
         self.entry.bind("<BackSpace>", self._on_backspace)
-        # Tab would otherwise move focus out of the entry, so both bindings
-        # return "break". (ISO_Left_Tab is an X11 keysym and is not valid on
-        # Windows Tk - Shift-Tab is the portable spelling.)
-        self.entry.bind("<Control-h>", lambda e: self._toggle_list("have"))
-        self.entry.bind("<Control-H>", self._ask_quantity)      # Ctrl+Shift+H
+        # S for stash. This was Ctrl+H until hjkl wanted the letter back.
+        self.entry.bind("<Control-s>", lambda e: self._toggle_list("have"))
+        self.entry.bind("<Control-S>", self._ask_quantity)      # Ctrl+Shift+S
         self.entry.bind("<Control-Up>", lambda e: self._bump_quantity(1))
         self.entry.bind("<Control-Down>", lambda e: self._bump_quantity(-1))
         # Ctrl+Delete rather than Delete: the search box owns plain Delete.
         self.entry.bind("<Control-Delete>", self._remove_from_stash)
         self.entry.bind("<Control-d>", lambda e: self._toggle_list("watch"))
+        # hjkl held under Ctrl, for hands that would rather not leave the home
+        # row: j/k walk the rows like Down/Up, h/l switch filter like
+        # Left/Right. Not a mode - the arrows still do exactly what they did,
+        # and the box is still taking letters the whole time. Each returns
+        # "break" because Tk's own Entry bindings put deletions on Ctrl+H and
+        # Ctrl+K, which would otherwise eat the search term.
+        self.entry.bind("<Control-j>", self._nav_down)
+        self.entry.bind("<Control-k>", self._nav_up)
+        # Unlike Left/Right these carry no caret to compete with, so they
+        # switch filter whatever arrow_keys_switch_filters is set to.
+        self.entry.bind("<Control-h>", self._prev_filter)
+        self.entry.bind("<Control-l>", self._next_filter)
         for position, key in enumerate(FILTER_KEYS):
             self.entry.bind(f"<Control-Key-{key}>",
                             lambda e, n=position: self._jump_filter(n))
@@ -392,6 +405,9 @@ class Popover:
         self.entry.bind("<Control-Shift-Right>", lambda e: self._move_filter(1))
         self.entry.bind("<F5>", self._sync)
         self.entry.bind("<Control-r>", self._sync)
+        # Tab would otherwise move focus out of the entry, so both bindings
+        # return "break". (ISO_Left_Tab is an X11 keysym and is not valid on
+        # Windows Tk - Shift-Tab is the portable spelling.)
         self.entry.bind("<Tab>", self._next_filter)
         self.entry.bind("<Shift-Tab>", self._prev_filter)
 
@@ -580,10 +596,10 @@ class Popover:
     # the window and got clipped, which taught nobody anything; the full set
     # lives in :help, and this shows the handful that apply right here.
     HINTS = {
-        "search": "↑↓ move · Enter open · Tab filter · Ctrl+Enter wiki · Ctrl+H have · :help · :q close",
-        "slots": "↑↓ move · Enter the parts in a category · Esc back · :help · :q close",
-        "parts": "↑↓ move · Enter what it fits · Ctrl+H have · Esc back · :help · :q close",
-        "fits": "↑↓ move · Enter that gun's parts · Esc back · :help · :q close",
+        "search": "↑↓ or Ctrl+jk move · Enter open · Tab filter · Ctrl+Enter wiki · Ctrl+S stash · :help · :q close",
+        "slots": "↑↓ or Ctrl+jk move · Enter the parts in a category · Esc back · :help · :q close",
+        "parts": "↑↓ or Ctrl+jk move · Enter what it fits · Ctrl+S stash · Esc back · :help · :q close",
+        "fits": "↑↓ or Ctrl+jk move · Enter that gun's parts · Esc back · :help · :q close",
     }
 
     def _flash(self, message: str) -> None:
@@ -609,6 +625,8 @@ class Popover:
             return self.status_note
         if self.qty_target:
             return "type a number · Enter save · 0 removes · Esc cancel"
+        if self._help_open():
+            return "↑↓ scroll · Esc clears the box · :q close"
         return self.HINTS.get(self.view, self.HINTS["search"])
 
     def _update_chrome(self) -> None:
@@ -686,7 +704,11 @@ class Popover:
         if not entry:
             return None
         item_id = entry.get("id") or ""
-        return None if item_id.startswith("extract:") else item_id
+        # extract: and recent: rows only look like items. One is a place on a
+        # map, the other a search you ran. Marking either wrote a stash row
+        # that nothing could join back to an item, so the Have chip would
+        # appear in the filter bar with an empty list behind it.
+        return None if item_id.startswith(("extract:", "recent:")) else item_id
 
     def _ask_quantity(self, event=None) -> str:
         """Turn the search box into "how many?" for the highlighted item.
@@ -840,14 +862,20 @@ class Popover:
         })
 
     def _go_back(self) -> str:
-        """Step back up one level. At the top it stays put.
+        """Step back up one level. At the top it clears the search box.
 
         Escape used to close the window from here, which made the key you
         press constantly to leave a mode or a level also the key that
         dismisses the thing you are reading. Closing is :q now, and nothing
-        else.
+        else. With nothing left to back out of, the one thing still worth
+        undoing is what you typed, so Esc empties the box and leaves you on
+        the recent searches.
         """
         if not self.back:
+            if self.entry.get():
+                self.entry.delete(0, "end")
+                self._on_type()
+                return "break"
             self._flash("already at the top - :q closes the window")
             return "break"
         frame = self.back.pop()
@@ -1257,9 +1285,11 @@ class Popover:
         ("  moving about\n", "head"),
         ("    type            ", "label"), ("search - the box always has the keyboard\n", None),
         ("    Up Down         ", "label"), ("next row, previous row\n", None),
+        ("    Ctrl+j  Ctrl+k  ", "label"), ("the same, without leaving the home row\n", None),
         ("    Enter           ", "label"), ("open what is highlighted\n", None),
-        ("    Esc  /  Backspace ", "label"), ("back one level (never closes)\n", None),
+        ("    Esc  /  Backspace ", "label"), ("back a level, or clear the search (never closes)\n", None),
         ("    Tab  /  Left Right ", "label"), ("switch filter\n", None),
+        ("    Ctrl+h  Ctrl+l  ", "label"), ("switch filter, whatever the arrows are set to\n", None),
         ("    Ctrl+1-0 y-p    ", "label"), ("jump straight to a filter\n", None),
 
         ("\n  going deeper (Enter)\n", "head"),
@@ -1273,19 +1303,19 @@ class Popover:
         ("    Ctrl+Enter      ", "label"), ("the wiki page\n", None),
         ("    Ctrl+Shift+Enter ", "label"), ("the flea market price page\n", None),
 
-        ("\n  your inventory\n", "head"),
-        ("    Ctrl+H          ", "label"), ("mark one as in your stash\n", None),
-        ("    Ctrl+Shift+H    ", "label"), ("type how many you have\n", None),
-        ("    Ctrl+Up Down    ", "label"), ("add or remove one\n", None),
-        ("    Ctrl+Del        ", "label"), ("take it out of your stash\n", None),
-        ("    to see it all   ", "label"), ("Tab to the Have filter, or Ctrl+its number\n", None),
+        ("\n  your stash  (the Have list, marked ★)\n", "head"),
+        ("    Ctrl+S          ", "label"), ("put this item on the list, or take it off again\n", None),
+        ("    Ctrl+Shift+S    ", "label"), ("say how many you have - Enter saves, 0 removes\n", None),
+        ("    Ctrl+Up Down    ", "label"), ("that count, one up or one down\n", None),
+        ("    Ctrl+Del        ", "label"), ("straight off the list, whatever the count\n", None),
+        ("    to see it all   ", "label"), ("Tab to the Have chip, or Ctrl+the number on it\n", None),
         ("    The Have chip appears in the filter bar once you hold\n", "dim"),
         ("    something, listed by what each pile is worth, with a total.\n", "dim"),
         ("    In a terminal: uv run tarkov-tools stash\n", "dim"),
 
-        ("\n  things to look out for\n", "head"),
-        ("    Ctrl+D          ", "label"), ("mark as worth watching for\n", None),
-        ("    to see it all   ", "label"), ("Tab to the Watch filter\n", None),
+        ("\n  things to look out for  (the Watch list, marked ◆)\n", "head"),
+        ("    Ctrl+D          ", "label"), ("put this item on the list, or take it off again\n", None),
+        ("    to see it all   ", "label"), ("Tab to the Watch chip\n", None),
         ("    Watched items carry a diamond everywhere they appear,\n", "dim"),
         ("    including inside a gun's parts list.\n", "dim"),
 
@@ -1309,6 +1339,19 @@ class Popover:
     CLOSE_WORDS = (":q", ":quit", ":x", ":close")
     QUIT_WORDS = (":q!", ":quit!", ":qa", ":qa!", ":wq")
     HELP_WORDS = (":help", ":h", ":?")
+
+    def _help_open(self) -> bool:
+        """True while :help is the pane on screen.
+
+        Read off the box rather than kept as a flag: help only ever shows
+        because the term is a help word, and every other way the pane gets
+        filled goes through typing something else, so a flag would be one
+        more thing to remember to clear.
+        """
+        try:
+            return self.entry.get().strip().lower() in self.HELP_WORDS
+        except Exception:
+            return False
 
     def _colon_preview(self, term: str) -> bool:
         """Show what a :command would do. True if the term is one.
@@ -1386,6 +1429,17 @@ class Popover:
         if event is not None and event.keysym in ("Up", "Down", "Return", "Escape",
                                                   "Tab", "ISO_Left_Tab"):
             return
+        if event is not None and self.entry.get() == self._last_term:
+            # A keystroke that left the box exactly as it was cannot have
+            # changed what the results should be, and re-running the search
+            # here throws away the row you were on. This fires on the release
+            # of every key not named above - which includes both halves of a
+            # Ctrl chord, and Ctrl coming back up on its own - so Ctrl+j moved
+            # down on the press and was snapped back to the top a moment
+            # later. Paste and cut still land here, and still search, because
+            # they do change the text.
+            return
+        self._last_term = self.entry.get()
         if self.view != "search":
             # Typing means the user wants to search again, however deep in.
             self.view = "search"
@@ -1440,7 +1494,10 @@ class Popover:
                               ("or :help for the keys\n", "dim")])
 
     def _on_escape(self, event=None) -> str:
-        """Escape backs out one level. It never closes the window."""
+        """Escape backs out one level, or clears the box at the top level.
+
+        It never closes the window.
+        """
         if self.qty_target:
             return self._cancel_quantity()
         return self._go_back()
@@ -1470,11 +1527,23 @@ class Popover:
             self._render(rows[index]["id"])
 
     def _nav_down(self, event=None):
+        if self._help_open():
+            return self._scroll_detail(1)
         self._move(1)
         return "break"
 
     def _nav_up(self, event=None):
+        if self._help_open():
+            return self._scroll_detail(-1)
         self._move(-1)
+        return "break"
+
+    def _scroll_detail(self, delta: int) -> str:
+        """Scroll the detail pane, for panes taller than the window."""
+        try:
+            self.detail.yview_scroll(delta, "units")
+        except Exception:
+            pass
         return "break"
 
     def _open_extract(self, result_id: str) -> None:
@@ -1670,6 +1739,8 @@ class Popover:
         for text, tag in chunks:
             self.detail.insert("end", text, tag)
         self.detail.configure(state="disabled")
+        # A fresh pane starts at the top however far the last one was scrolled.
+        self.detail.yview_moveto(0)
 
     def _append_detail(self, chunks) -> None:
         """Add to what the detail pane already shows, rather than replacing it."""
@@ -1762,7 +1833,7 @@ class Popover:
             (f"  {len(rows)} kinds, {units} items, ", "dim"),
             (f"{_fmt_price(total)} RUB", "good"),
             (" at flea prices\n", "dim"),
-            ("  Ctrl+Shift+H change count    Ctrl+Del remove\n", "label"),
+            ("  Ctrl+Shift+S change count    Ctrl+Del remove\n", "label"),
         ]
 
     def _stash_line(self, item_id: str) -> list[tuple[str, str]]:
@@ -1777,7 +1848,7 @@ class Popover:
             count = self.have_qty.get(item_id, 1)
             out.append((f"  {MARK_HAVE} in your stash", "good"))
             out.append((f" x{count}\n" if count > 1 else "\n", "good"))
-            out.append(("    Ctrl+Shift+H change count   "
+            out.append(("    Ctrl+Shift+S change count   "
                         "Ctrl+Up/Down +1/-1   Ctrl+Del remove\n", "dim"))
         if item_id in self.watch:
             out.append((f"  {MARK_WATCH} watching for it", "good"))

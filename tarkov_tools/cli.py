@@ -168,7 +168,7 @@ def _cmd_stash(args: argparse.Namespace) -> int:
     if not rows:
         print(f"nothing on your '{list_name}' list yet.\n"
               f"Add something with:  uv run tarkov-tools stash \"ledx\" 3\n"
-              f"or press Ctrl+Shift+H in the overlay.")
+              f"or press Ctrl+Shift+S in the overlay.")
         conn.close()
         return 0
 
@@ -246,6 +246,41 @@ def _database_is_empty(conn) -> bool:
         return not conn.execute("SELECT 1 FROM items LIMIT 1").fetchone()
     except Exception:
         return True
+
+
+def ensure_database(verbose: bool = True) -> bool:
+    """Build the database if this is the first run. True if it holds items.
+
+    The import is the first thing the instructions used to tell you to do,
+    and nothing works until it has run - so run it rather than print it. Only
+    ever on an empty database: it is a long download, and a later empty
+    result means a bad search, not a missing step.
+    """
+    from . import db as dbmod
+
+    conn = dbmod.connect()
+    try:
+        if not _database_is_empty(conn):
+            return True
+    finally:
+        conn.close()
+
+    if verbose:
+        print("First run - building the item database.")
+        print("  Downloading the game's item templates and their English")
+        print("  names. It is a big file and takes a minute; it happens once.")
+        print()
+    try:
+        from .templates import run_import
+
+        run_import(do_download=True, verbose=verbose)
+    except Exception as exc:
+        print(f"\ncould not build the database: {exc}\n\n{BUILD_HINT}",
+              file=sys.stderr)
+        return False
+    if verbose:
+        print("\ndatabase ready.\n")
+    return True
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
@@ -392,6 +427,8 @@ def _cmd_ammo(args: argparse.Namespace) -> int:
 def _cmd_popover(args: argparse.Namespace) -> int:
     from .popover import main as popover_main
 
+    if not ensure_database():
+        return 1
     return popover_main(args.hotkey)
 
 
@@ -621,6 +658,9 @@ def _cmd_start(args: argparse.Namespace) -> int:
 
     from . import gamma as gm
     from .popover import main as popover_main
+
+    if not ensure_database():
+        return 1
 
     cfg = load_config()["gamma"]
     value = args.value if args.value is not None else cfg["value"]
@@ -909,7 +949,7 @@ examples:
         Everything you have marked as being in your stash, with how many of
         each, ordered by what the pile is worth.
 
-        Marking happens in the overlay - Ctrl+H for one, Ctrl+Shift+H to type
+        Marking happens in the overlay - Ctrl+S for one, Ctrl+Shift+S to type
         a count, Ctrl+Up/Down to nudge it - but a count can be set from here
         too, which is easier when you are stocktaking rather than playing.
 

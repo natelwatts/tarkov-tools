@@ -114,11 +114,17 @@ def browse(conn: sqlite3.Connection, kind: str, side: str | None = None,
         ]
 
     if kind in LIST_NAMES:
+        # Ordered by what the pile is worth rather than alphabetically - the
+        # question being asked of a stash list is usually "what do I sell".
         rows = conn.execute(
             """
-            SELECT i.id, i.name, i.short_name, i.avg_24h_price
-            FROM stash s JOIN items i ON i.id = s.item_id
-            WHERE s.list_name = ? ORDER BY i.name LIMIT ?
+            SELECT i.id, i.name, i.short_name, i.avg_24h_price, s.quantity,
+                   COALESCE(p.price, 0) * s.quantity AS line_value
+            FROM stash s
+            JOIN items i ON i.id = s.item_id
+            LEFT JOIN flea_prices p ON p.item_id = s.item_id
+            WHERE s.list_name = ?
+            ORDER BY line_value DESC, i.name LIMIT ?
             """,
             (kind, limit),
         ).fetchall()
@@ -300,11 +306,81 @@ def toggle_list(conn: sqlite3.Connection, item_id: str, list_name: str) -> bool:
         conn.commit()
         return False
     conn.execute(
-        "INSERT INTO stash (item_id, list_name, added_at) VALUES (?,?,datetime('now'))",
+        "INSERT INTO stash (item_id, list_name, quantity, added_at) "
+        "VALUES (?,?,1,datetime('now'))",
         (item_id, list_name),
     )
     conn.commit()
     return True
+
+
+def set_quantity(conn: sqlite3.Connection, item_id: str, list_name: str,
+                 quantity: int) -> int:
+    """Set how many of something is on a list. Zero or less takes it off.
+
+    Returns the quantity now held, so callers can report it without a second
+    read.
+    """
+    quantity = int(quantity)
+    if quantity <= 0:
+        conn.execute("DELETE FROM stash WHERE item_id = ? AND list_name = ?",
+                     (item_id, list_name))
+        conn.commit()
+        return 0
+    conn.execute(
+        """
+        INSERT INTO stash (item_id, list_name, quantity, added_at)
+        VALUES (?, ?, ?, datetime('now'))
+        ON CONFLICT(item_id, list_name) DO UPDATE SET quantity = excluded.quantity
+        """,
+        (item_id, list_name, quantity),
+    )
+    conn.commit()
+    return quantity
+
+
+def adjust_quantity(conn: sqlite3.Connection, item_id: str, list_name: str,
+                    delta: int) -> int:
+    """Nudge a count up or down, adding the item if it was not listed."""
+    row = conn.execute(
+        "SELECT quantity FROM stash WHERE item_id = ? AND list_name = ?",
+        (item_id, list_name),
+    ).fetchone()
+    current = (row["quantity"] if row else 0) or 0
+    return set_quantity(conn, item_id, list_name, current + delta)
+
+
+def quantities(conn: sqlite3.Connection, list_name: str) -> dict[str, int]:
+    """item id -> how many, for drawing counts alongside the marks."""
+    try:
+        return {r["item_id"]: (r["quantity"] or 1) for r in conn.execute(
+            "SELECT item_id, quantity FROM stash WHERE list_name = ?", (list_name,))}
+    except sqlite3.Error:
+        return {}
+
+
+def stash_contents(conn: sqlite3.Connection, list_name: str = "have",
+                   limit: int = 500) -> list[dict[str, Any]]:
+    """Everything on a list with what it is worth, most valuable line first."""
+    try:
+        rows = conn.execute(
+            """
+            SELECT i.id, i.name, i.short_name, s.quantity,
+                   p.price AS unit_price,
+                   COALESCE(p.price, 0) * s.quantity AS line_value,
+                   i.width, i.height
+            FROM stash s
+            JOIN items i ON i.id = s.item_id
+            LEFT JOIN flea_prices p ON p.item_id = s.item_id
+            WHERE s.list_name = ?
+            ORDER BY line_value DESC, i.name
+            LIMIT ?
+            """,
+            (list_name, limit),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [dict(r) for r in rows]
 
 
 def listed(conn: sqlite3.Connection, list_name: str) -> set[str]:

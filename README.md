@@ -286,6 +286,35 @@ for. Marked items carry a star or diamond everywhere they appear - including
 in a gun's parts list, so browsing a build shows at a glance which pieces you
 already own. Each list gets its own Tab filter once it holds something.
 
+### How many you have
+
+**Ctrl+Shift+H** turns the search box into *"how many do you have?"* - type a
+number, Enter saves it, `0` removes the item, Esc cancels and gives you your
+search back. **Ctrl+Up / Ctrl+Down** nudge the count by one without leaving
+the results, for when you pick up one more of something.
+
+Counts show up next to the star everywhere - `★12 LEDX Skin Transilluminator`
+- and the **Have filter lists everything you hold, most valuable pile first**.
+
+From a terminal:
+
+```powershell
+uv run tarkov-tools stash              # everything, with totals
+uv run tarkov-tools stash ledx 3       # set a count
+uv run tarkov-tools stash ledx 0       # remove it
+```
+
+```
+ qty         each         total  item
+   3      583,680     1,751,040  LEDX Skin Transilluminator
+   5       38,250       191,250  Salewa first aid kit
+
+2 kinds, 8 items, 1,942,290 RUB at flea prices
+```
+
+Totals use the flea snapshot, and items banned from the flea count as zero
+rather than being quietly dropped from the list.
+
 The lists live in their own table, so re-importing templates or re-syncing an
 account never disturbs them.
 - Search an **extract** → side, chance, exfil timer, requirement and which

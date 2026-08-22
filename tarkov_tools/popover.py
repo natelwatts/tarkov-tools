@@ -285,6 +285,11 @@ class Popover:
         self.back: list[dict] = []
         self.have: set[str] = set()
         self.watch: set[str] = set()
+        self.have_qty: dict[str, int] = {}
+        # Set while the search box is being used to type a stash count.
+        self.qty_target: str | None = None
+        self.qty_name = ""
+        self.qty_prev_term = ""
         self.status_note = ''
         self._refresh_marks()
         self._build()
@@ -367,6 +372,9 @@ class Popover:
         # return "break". (ISO_Left_Tab is an X11 keysym and is not valid on
         # Windows Tk - Shift-Tab is the portable spelling.)
         self.entry.bind("<Control-h>", lambda e: self._toggle_list("have"))
+        self.entry.bind("<Control-H>", self._ask_quantity)      # Ctrl+Shift+H
+        self.entry.bind("<Control-Up>", lambda e: self._bump_quantity(1))
+        self.entry.bind("<Control-Down>", lambda e: self._bump_quantity(-1))
         self.entry.bind("<Control-d>", lambda e: self._toggle_list("watch"))
         for position, key in enumerate(FILTER_KEYS):
             self.entry.bind(f"<Control-Key-{key}>",
@@ -424,7 +432,7 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  ←→ / Tab / Ctrl+1-0,y-p filter   ↑↓ move   Enter parts / map   Ctrl+Enter wiki   Ctrl+Shift+Enter price   Ctrl+Shift+←→ reorder   Ctrl+H have   Ctrl+D watch   F5 sync   Esc back  ",
+            text="  ←→ / Tab / Ctrl+1-0,y-p filter   ↑↓ move   Enter parts / map   Ctrl+Enter wiki   Ctrl+Shift+Enter price   Ctrl+Shift+←→ reorder   Ctrl+H have   Ctrl+Shift+H count   Ctrl+D watch   F5 sync   Esc back  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
@@ -627,6 +635,95 @@ class Popover:
         item_id = entry.get("id") or ""
         return None if item_id.startswith("extract:") else item_id
 
+    def _ask_quantity(self, event=None) -> str:
+        """Turn the search box into "how many?" for the highlighted item.
+
+        A prompt rather than a key you tap N times: counting out twelve
+        Salewas one keypress at a time is not what you want mid-raid.
+        """
+        item_id = self._selected_item_id()
+        if not item_id:
+            return "break"
+        self.qty_target = item_id
+        self.qty_name = (
+            (self._current_subject() or self._current_result() or {}).get("name") or ""
+        ).replace("[DEMO] ", "")
+        # The box is about to hold digits, so park the search term - otherwise
+        # saving a count silently throws away the results behind the prompt.
+        self.qty_prev_term = self.entry.get()
+        self.entry.delete(0, "end")
+        self._render_quantity_prompt()
+        return "break"
+
+    def _render_quantity_prompt(self) -> None:
+        held = self.have_qty.get(self.qty_target or "", 0)
+        typed = self.entry.get().strip()
+        self._set_detail([
+            (f"{self.qty_name}\n\n", "head"),
+            ("  how many do you have?  ", "label"),
+            (f"{typed or '_'}\n\n", "good"),
+            (f"  currently holding {held}\n" if held else "  not in your stash yet\n", "dim"),
+            ("\n  Enter to save, 0 to remove, Esc to cancel\n", "dim"),
+        ])
+
+    def _commit_quantity(self) -> str:
+        typed = self.entry.get().strip()
+        item_id, name = self.qty_target, self.qty_name
+        self.qty_target = None
+        self._restore_term()
+        if not item_id or not typed.isdigit():
+            self._on_type()
+            return "break"
+        held = searchmod.set_quantity(self.conn, item_id, "have", int(typed))
+        self._refresh_marks()
+        self._rebuild_filter_bar()
+        self.status_note = (f"holding {held}" if held else f"removed {name}")
+        self._redraw_current()
+        return "break"
+
+    def _cancel_quantity(self) -> str:
+        self.qty_target = None
+        self._restore_term()
+        self._on_type()
+        return "break"
+
+    def _restore_term(self) -> None:
+        """Put the search term back after the box was borrowed for a count."""
+        self.entry.delete(0, "end")
+        if self.qty_prev_term:
+            self.entry.insert(0, self.qty_prev_term)
+        self.qty_prev_term = ""
+
+    def _bump_quantity(self, delta: int) -> str:
+        """Nudge the count without leaving the results."""
+        item_id = self._selected_item_id()
+        if not item_id:
+            return "break"
+        held = searchmod.adjust_quantity(self.conn, item_id, "have", delta)
+        self._refresh_marks()
+        self._rebuild_filter_bar()
+        self.status_note = f"holding {held}" if held else "removed from have"
+        self._redraw_current()
+        return "break"
+
+    def _redraw_current(self) -> None:
+        """Redraw whichever list is showing, keeping the selection."""
+        keep = self._current_row()
+        if self.view == "parts":
+            self._show_parts(keep)
+        elif self.view == "fits":
+            self._show_fits(keep)
+        elif self.view == "slots":
+            self._render_slot(keep)
+        else:
+            self._on_type()
+            if keep < self.listbox.size():
+                self.listbox.selection_clear(0, "end")
+                self.listbox.selection_set(keep)
+                entry = self._current_result()
+                if entry:
+                    self._render(entry["id"])
+
     def _toggle_list(self, list_name: str) -> str:
         item_id = self._selected_item_id()
         if not item_id:
@@ -656,11 +753,16 @@ class Popover:
     def _refresh_marks(self) -> None:
         self.have = searchmod.listed(self.conn, "have")
         self.watch = searchmod.listed(self.conn, "watch")
+        self.have_qty = searchmod.quantities(self.conn, "have")
 
     def _marks(self, item_id: str) -> str:
+        """The star/diamond for a row, with the count when you hold more than one."""
         marks = ""
         if item_id in self.have:
             marks += MARK_HAVE
+            count = self.have_qty.get(item_id, 1)
+            if count > 1:
+                marks += str(count)
         if item_id in self.watch:
             marks += MARK_WATCH
         return marks
@@ -771,7 +873,7 @@ class Popover:
             # Ergo earns the space a kind tag would take: every row here is a
             # part, and the list is ordered by it.
             self.listbox.insert(
-                "end", f"{_signed(part.get('ergonomics')):>4} {mark:<2}{name[:30]}"
+                "end", f"{_signed(part.get('ergonomics')):>4} {mark:<4}{name[:28]}"
             )
         index = max(0, min(len(self.part_entries) - 1, index))
         self.listbox.selection_clear(0, "end")
@@ -802,7 +904,7 @@ class Popover:
         for gun in self.fits_entries:
             mark = self._marks(gun.get("id") or "")
             name = (gun.get("name") or "").replace("[DEMO] ", "")
-            self.listbox.insert("end", f"{'GUN':<4} {mark:<2}{name[:30]}")
+            self.listbox.insert("end", f"{'GUN':<4} {mark:<4}{name[:28]}")
         index = max(0, min(len(self.fits_entries) - 1, index))
         self.listbox.selection_clear(0, "end")
         self.listbox.selection_set(index)
@@ -827,7 +929,7 @@ class Popover:
             out.append((f"  {_signed(recoil):>6}", "good" if (recoil or 0) < 0 else "dim"))
             out.append((f"  {_signed(loud):>5}", "dim"))
             mark = self._marks(part.get("id") or "")
-            out.append((f"  {mark:<2}", "good" if mark else "dim"))
+            out.append((f"  {mark:<4}", "good" if mark else "dim"))
             out.append((f"{(part['name'] or '')[:50]}\n", None))
         if not parts:
             out.append(("    no parts recorded\n", "dim"))
@@ -1062,6 +1164,9 @@ class Popover:
         ("    Ctrl+Shift+Enter ", "label"), ("the flea market price page\n", None),
         ("\n  keeping track\n", "head"),
         ("    Ctrl+H          ", "label"), ("mark as in your stash\n", None),
+        ("    Ctrl+Shift+H    ", "label"), ("type how many you have\n", None),
+        ("    Ctrl+Up Down    ", "label"), ("add or remove one\n", None),
+        ("    Have filter     ", "label"), ("everything you hold, by value\n", None),
         ("    Ctrl+D          ", "label"), ("mark as worth looking out for\n", None),
         ("    F5              ", "label"), ("refresh prices, and TarkovTracker if connected\n", None),
         ("\n  getting out\n", "head"),
@@ -1088,6 +1193,10 @@ class Popover:
             self.slot_entries = []
             self.part_entries = []
             self.fits_entries = []
+        if self.qty_target:
+            # The box is collecting a count, not a search term.
+            self._render_quantity_prompt()
+            return
         term = self.entry.get().strip()
         if term.lower() in (":help", ":h", ":?"):
             self.results = []
@@ -1114,7 +1223,7 @@ class Popover:
                 # Two extracts can share a name (a PMC and a Scav one), so the
                 # map is shown here and the side in the detail pane.
                 name = f"{name} · {r['short_name']}"
-            self.listbox.insert("end", f"{tag:<4} {mark:<2}{name[:30]}")
+            self.listbox.insert("end", f"{tag:<4} {mark:<4}{name[:28]}")
         if self.results:
             self.listbox.selection_clear(0, "end")
             self.listbox.selection_set(0)
@@ -1126,6 +1235,8 @@ class Popover:
 
     def _on_escape(self, event=None) -> str:
         """Escape backs out one level at a time, and only then hides."""
+        if self.qty_target:
+            return self._cancel_quantity()
         return self._go_back()
 
     def _on_backspace(self, event=None):
@@ -1294,6 +1405,8 @@ class Popover:
         return "break"
 
     def _nav_enter(self, event=None):
+        if self.qty_target:
+            return self._commit_quantity()
         if self.view == "slots":
             self._enter_parts(self._current_row())
             return "break"
@@ -1402,6 +1515,17 @@ class Popover:
             out.append(("  (no map marker for this one - opens the map unfocused)\n", "dim"))
         return out
 
+    def _stash_line(self, item_id: str) -> list[tuple[str, str]]:
+        """How many of this you have, when you have any."""
+        out: list[tuple[str, str]] = []
+        if item_id in self.have:
+            count = self.have_qty.get(item_id, 1)
+            out.append((f"  {MARK_HAVE} in your stash", "good"))
+            out.append((f" x{count}\n" if count > 1 else "\n", "good"))
+        if item_id in self.watch:
+            out.append((f"  {MARK_WATCH} watching for it\n", "good"))
+        return out
+
     def _flea_line(self, data: dict) -> list[tuple[str, str]]:
         """Price, value per slot, and which way it is moving.
 
@@ -1433,9 +1557,7 @@ class Popover:
         fits = data.get("fits") or []
         slots = (fits[0].get("_slots") if fits else None) or []
         out: list[tuple[str, str]] = [(f"{item['name']}\n", "head")]
-        marks = self._marks(item["id"])
-        if marks:
-            out.append((f"  {marks} on your list\n", "good"))
+        out += self._stash_line(item["id"])
         out += self._flea_line(data)
         out.append((f"  {' / '.join(slots) or 'attachment'}\n\n", "dim"))
 
@@ -1479,6 +1601,7 @@ class Popover:
         kind = data["kind"]
 
         out.append((f"{item['name']}\n", "head"))
+        out += self._stash_line(item["id"])
         out += self._flea_line(data)
         out.append(("\n", None))
         # Quest and hideout demand goes above the stats: when an item is in

@@ -13,6 +13,7 @@
   uv run tarkov-tools search m995      look something up in the terminal
   uv run tarkov-tools ammo             penetration chart by caliber
   uv run tarkov-tools prices update    pull current flea market prices
+  uv run tarkov-tools stash            what you have and what it is worth
   uv run tarkov-tools popover          search popover only
   uv run tarkov-tools extract zb-1011  open the wiki map, extract highlighted
   uv run tarkov-tools tracker login    connect your TarkovTracker account
@@ -122,6 +123,60 @@ def _cmd_import_templates(args: argparse.Namespace) -> int:
     for table, count in counts.items():
         print(f"  {table:18} {count}")
     print("\nNote: templates carry no market prices - price columns are left as-is.")
+    return 0
+
+
+def _cmd_stash(args: argparse.Namespace) -> int:
+    from . import db as dbmod
+    from . import search as searchmod
+
+    conn = dbmod.connect()
+    list_name = "watch" if args.list == "watch" else "have"
+
+    if args.item:
+        words = list(args.item)
+        count = 1
+        if len(words) > 1 and words[-1].isdigit():
+            count = int(words.pop())
+        name = " ".join(words)
+        matches = searchmod.search(conn, name, 5)
+        matches = [m for m in matches if not str(m.get("id", "")).startswith("extract:")]
+        if not matches:
+            print(f"no item matching {name!r}")
+            conn.close()
+            return 1
+        item = matches[0]
+        held = searchmod.set_quantity(conn, item["id"], list_name, count)
+        verb = f"holding {held}" if held else "removed from your stash"
+        print(f"{item['name']}: {verb}")
+        conn.close()
+        return 0
+
+    rows = searchmod.stash_contents(conn, list_name)
+    if not rows:
+        print(f"nothing on your '{list_name}' list yet.\n"
+              f"Add something with:  uv run tarkov-tools stash \"ledx\" 3\n"
+              f"or press Ctrl+Shift+H in the overlay.")
+        conn.close()
+        return 0
+
+    print(f"\n{'qty':>4}  {'each':>11}  {'total':>12}  item")
+    total = 0
+    unpriced = 0
+    for row in rows:
+        total += row["line_value"] or 0
+        each = f"{row['unit_price']:,}" if row["unit_price"] else "-"
+        if not row["unit_price"]:
+            unpriced += 1
+        line = f"{row['line_value']:,}" if row["line_value"] else "-"
+        print(f"{row['quantity']:>4}  {each:>11}  {line:>12}  {row['name'][:44]}")
+
+    kinds = len(rows)
+    units = sum(r["quantity"] for r in rows)
+    print(f"\n{kinds} kinds, {units} items, {total:,} RUB at flea prices")
+    if unpriced:
+        print(f"({unpriced} of them have no flea price - banned, or no snapshot yet)")
+    conn.close()
     return 0
 
 
@@ -830,6 +885,37 @@ examples:
     pr.add_argument("--min-price", type=int, default=0,
                     help="ignore items cheaper than this in 'top'")
     pr.set_defaults(func=_cmd_prices)
+
+    sh = _sub(
+        sub, "stash",
+        "what you have, and what it is worth",
+        """
+        Everything you have marked as being in your stash, with how many of
+        each, ordered by what the pile is worth.
+
+        Marking happens in the overlay - Ctrl+H for one, Ctrl+Shift+H to type
+        a count, Ctrl+Up/Down to nudge it - but a count can be set from here
+        too, which is easier when you are stocktaking rather than playing.
+
+        Totals use flea prices, so run 'prices update' first if they look
+        stale. Items banned from the flea count as zero rather than being
+        left out.
+        """,
+        """
+examples:
+  uv run tarkov-tools stash                    everything you hold
+  uv run tarkov-tools stash ledx 3             set a count
+  uv run tarkov-tools stash ledx 0             remove it
+  uv run tarkov-tools stash --list watch       the watch list instead
+        """,
+    )
+    # One greedy positional: a trailing number is read as the count, because
+    # argparse cannot split "ledx 3" between a nargs="*" and a nargs="?".
+    sh.add_argument("item", nargs="*",
+                    help="item name, optionally followed by a count (0 removes)")
+    sh.set_defaults(func=_cmd_stash)
+    sh.add_argument("--list", default="have", choices=["have", "watch"],
+                    help="which list (default: have)")
 
     hk = _sub(
         sub, "hotkey",

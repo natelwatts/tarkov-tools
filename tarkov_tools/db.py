@@ -157,6 +157,7 @@ CREATE INDEX IF NOT EXISTS idx_offers_item ON trader_offers(item_id);
 CREATE TABLE IF NOT EXISTS stash (
     item_id   TEXT NOT NULL,
     list_name TEXT NOT NULL,
+    quantity  INTEGER NOT NULL DEFAULT 1,
     note      TEXT,
     added_at  TEXT,
     PRIMARY KEY (item_id, list_name)
@@ -212,6 +213,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     CREATE TABLE IF NOT EXISTS silently does nothing for an existing table, so
     new columns need adding explicitly or older databases break.
     """
+    stash_columns = {row[1] for row in conn.execute("PRAGMA table_info(stash)")}
+    if stash_columns and "quantity" not in stash_columns:
+        # Existing marks predate counting and mean "I have one".
+        conn.execute("ALTER TABLE stash ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1")
+        conn.commit()
+
     columns = {row[1] for row in conn.execute("PRAGMA table_info(items)")}
     if "kind" not in columns:
         conn.execute("ALTER TABLE items ADD COLUMN kind TEXT")

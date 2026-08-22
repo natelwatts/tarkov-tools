@@ -133,6 +133,18 @@ def _cmd_stash(args: argparse.Namespace) -> int:
     conn = dbmod.connect()
     list_name = "watch" if args.list == "watch" else "have"
 
+    if args.clear:
+        rows = searchmod.stash_contents(conn, list_name)
+        if not rows:
+            print(f"'{list_name}' was already empty")
+            conn.close()
+            return 0
+        conn.execute("DELETE FROM stash WHERE list_name = ?", (list_name,))
+        conn.commit()
+        print(f"cleared {len(rows)} kinds off your '{list_name}' list")
+        conn.close()
+        return 0
+
     if args.item:
         words = list(args.item)
         count = 1
@@ -906,6 +918,7 @@ examples:
   uv run tarkov-tools stash                    everything you hold
   uv run tarkov-tools stash ledx 3             set a count
   uv run tarkov-tools stash ledx 0             remove it
+  uv run tarkov-tools stash --clear            empty the list
   uv run tarkov-tools stash --list watch       the watch list instead
         """,
     )
@@ -916,6 +929,8 @@ examples:
     sh.set_defaults(func=_cmd_stash)
     sh.add_argument("--list", default="have", choices=["have", "watch"],
                     help="which list (default: have)")
+    sh.add_argument("--clear", action="store_true",
+                    help="empty the whole list")
 
     hk = _sub(
         sub, "hotkey",

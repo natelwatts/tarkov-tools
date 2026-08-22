@@ -375,6 +375,8 @@ class Popover:
         self.entry.bind("<Control-H>", self._ask_quantity)      # Ctrl+Shift+H
         self.entry.bind("<Control-Up>", lambda e: self._bump_quantity(1))
         self.entry.bind("<Control-Down>", lambda e: self._bump_quantity(-1))
+        # Ctrl+Delete rather than Delete: the search box owns plain Delete.
+        self.entry.bind("<Control-Delete>", self._remove_from_stash)
         self.entry.bind("<Control-d>", lambda e: self._toggle_list("watch"))
         for position, key in enumerate(FILTER_KEYS):
             self.entry.bind(f"<Control-Key-{key}>",
@@ -432,7 +434,7 @@ class Popover:
 
         hint = tk.Label(
             inner,
-            text="  ←→ / Tab / Ctrl+1-0,y-p filter   ↑↓ move   Enter parts / map   Ctrl+Enter wiki   Ctrl+Shift+Enter price   Ctrl+Shift+←→ reorder   Ctrl+H have   Ctrl+Shift+H count   Ctrl+D watch   F5 sync   Esc back  ",
+            text="  ←→ / Tab / Ctrl+1-0,y-p filter   ↑↓ move   Enter parts / map   Ctrl+Enter wiki   Ctrl+Shift+Enter price   Ctrl+Shift+←→ reorder   Ctrl+H have   Ctrl+Shift+H count   Ctrl+Del drop   Ctrl+D watch   F5 sync   Esc back  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
         hint.pack(fill="x", side="bottom")
@@ -1166,6 +1168,7 @@ class Popover:
         ("    Ctrl+H          ", "label"), ("mark as in your stash\n", None),
         ("    Ctrl+Shift+H    ", "label"), ("type how many you have\n", None),
         ("    Ctrl+Up Down    ", "label"), ("add or remove one\n", None),
+        ("    Ctrl+Del        ", "label"), ("take it out of your stash\n", None),
         ("    Have filter     ", "label"), ("everything you hold, by value\n", None),
         ("    Ctrl+D          ", "label"), ("mark as worth looking out for\n", None),
         ("    F5              ", "label"), ("refresh prices, and TarkovTracker if connected\n", None),
@@ -1228,6 +1231,8 @@ class Popover:
             self.listbox.selection_clear(0, "end")
             self.listbox.selection_set(0)
             self._render(self.results[0]["id"])
+            if kind == "have" and not term:
+                self._append_detail(self._stash_footer())
         else:
             self._set_detail([("no matches\n", "dim")] if term else
                              [("type a gun, round, magazine or extract name\n", "dim"),
@@ -1454,6 +1459,15 @@ class Popover:
             self.detail.insert("end", text, tag)
         self.detail.configure(state="disabled")
 
+    def _append_detail(self, chunks) -> None:
+        """Add to what the detail pane already shows, rather than replacing it."""
+        if not chunks:
+            return
+        self.detail.configure(state="normal")
+        for text, tag in chunks:
+            self.detail.insert("end", text, tag)
+        self.detail.configure(state="disabled")
+
     def _render(self, item_id: str) -> None:
         data = searchmod.describe(self.conn, item_id)
         if not data:
@@ -1515,16 +1529,54 @@ class Popover:
             out.append(("  (no map marker for this one - opens the map unfocused)\n", "dim"))
         return out
 
+    def _stash_footer(self) -> list[tuple[str, str]]:
+        """Totals and the editing keys, shown under the Have list."""
+        rows = searchmod.stash_contents(self.conn, "have")
+        if not rows:
+            return []
+        total = sum(r["line_value"] or 0 for r in rows)
+        units = sum(r["quantity"] or 0 for r in rows)
+        return [
+            ("\n  ─────────────\n", "dim"),
+            (f"  {len(rows)} kinds, {units} items, ", "dim"),
+            (f"{_fmt_price(total)} RUB", "good"),
+            (" at flea prices\n", "dim"),
+            ("  Ctrl+Shift+H change count    Ctrl+Del remove\n", "label"),
+        ]
+
     def _stash_line(self, item_id: str) -> list[tuple[str, str]]:
-        """How many of this you have, when you have any."""
+        """How many of this you have, and how to change it.
+
+        The keys are spelled out on the item rather than left to the hint bar:
+        holding a count is the point at which you want to edit or drop it, and
+        that is exactly when you are looking at this pane.
+        """
         out: list[tuple[str, str]] = []
         if item_id in self.have:
             count = self.have_qty.get(item_id, 1)
             out.append((f"  {MARK_HAVE} in your stash", "good"))
             out.append((f" x{count}\n" if count > 1 else "\n", "good"))
+            out.append(("    Ctrl+Shift+H change count   "
+                        "Ctrl+Up/Down +1/-1   Ctrl+Del remove\n", "dim"))
         if item_id in self.watch:
-            out.append((f"  {MARK_WATCH} watching for it\n", "good"))
+            out.append((f"  {MARK_WATCH} watching for it", "good"))
+            out.append(("    Ctrl+D to stop\n", "dim"))
         return out
+
+    def _remove_from_stash(self, event=None) -> str:
+        """Drop the highlighted item off the have list outright."""
+        item_id = self._selected_item_id()
+        if not item_id or item_id not in self.have:
+            return "break"
+        name = (
+            (self._current_subject() or self._current_result() or {}).get("name") or ""
+        ).replace("[DEMO] ", "")
+        searchmod.set_quantity(self.conn, item_id, "have", 0)
+        self._refresh_marks()
+        self._rebuild_filter_bar()
+        self.status_note = f"removed {name}" if name else "removed from your stash"
+        self._redraw_current()
+        return "break"
 
     def _flea_line(self, data: dict) -> list[tuple[str, str]]:
         """Price, value per slot, and which way it is moving.

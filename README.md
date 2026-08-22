@@ -293,8 +293,18 @@ number, Enter saves it, `0` removes the item, Esc cancels and gives you your
 search back. **Ctrl+Up / Ctrl+Down** nudge the count by one without leaving
 the results, for when you pick up one more of something.
 
+**Ctrl+Del removes** whatever is highlighted from your stash outright.
+
 Counts show up next to the star everywhere - `★12 LEDX Skin Transilluminator`
-- and the **Have filter lists everything you hold, most valuable pile first**.
+- and the **Have filter lists everything you hold, most valuable pile first**,
+with a running total and the editing keys underneath. Any item you hold spells
+the keys out in its own detail pane, so you never have to remember them:
+
+```
+LEDX Skin Transilluminator
+  ★ in your stash x4
+    Ctrl+Shift+H change count   Ctrl+Up/Down +1/-1   Ctrl+Del remove
+```
 
 From a terminal:
 
@@ -302,6 +312,7 @@ From a terminal:
 uv run tarkov-tools stash              # everything, with totals
 uv run tarkov-tools stash ledx 3       # set a count
 uv run tarkov-tools stash ledx 0       # remove it
+uv run tarkov-tools stash --clear      # empty the list
 ```
 
 ```

@@ -298,52 +298,27 @@ searches again.
 - Search a **part** → its ergo/recoil/accuracy/loudness and every weapon it
   fits on, however many levels up that is.
 
-### Vim keys
+### Getting around
 
-The overlay has two modes, shown bottom-left:
-
-- **SEARCH** - typing goes in the box, as it always has. This is where you
-  land when the hotkey opens it.
-- **NORMAL** - keys are commands. `Esc` from SEARCH drops you here rather
-  than closing, so you can browse results without the box eating your
-  keystrokes.
-
-**Swapping between them:** `Esc` goes SEARCH → NORMAL, `/` goes back the other
-way with a fresh search, `i` goes back keeping what you already typed. The
-badge in the bottom-left names the mode *and* the key out of it, so there is
-nothing to memorise.
-
-The line beside it lists only the keys that apply where you are standing -
-it changes with the mode and with how deep you have browsed. The full set is
-always `:help`.
+The search box always has the keyboard - type and it searches, with no mode to
+be in.
 
 | key | does |
 |---|---|
-| `j` `k` | next row, previous row |
-| `h` `l` | previous filter, next filter |
-| `g` `G` | first, last |
+| `Up` `Down` | next row, previous row |
 | `Enter` | open what's highlighted |
 | `Esc` / `Backspace` | back a level - **never closes the window** |
-| `/` | fresh search |
-| `i` | keep typing on what's there |
+| `Tab` / `Left` `Right` | switch filter |
+| `Ctrl+1`-`0`, `y`-`p` | jump straight to a filter |
 | `:q` | close the window, everything keeps running |
 | `:q!` | quit properly - stops the gamma watcher and restores gamma |
-| `1`-`0`, `y`-`p` | jump to a filter (no Ctrl needed in NORMAL) |
-
-`h`/`l` move sideways the way `j`/`k` move up and down - and sideways here is
-the filter bar. Backing out of a level is `Esc` or `Backspace`, which already
-did that job.
 
 **Nothing but `:q` closes the window.** `Esc` at the top level says so and
-stays put, rather than dismissing what you were reading - it is the key you
-press constantly to leave a mode or a level, so it should not double as the
-exit. Your hotkey still toggles the window as it always has.
+stays put, rather than dismissing what you were reading. Your hotkey still
+toggles it as it always has.
 
-Every `Ctrl+` shortcut works identically in both modes - `Ctrl+H`, `Ctrl+Enter`
-and the rest never get intercepted.
-
-Not for you? `"vim_keys": false` under `search` in `config.json` and every key
-types into the box exactly as before.
+The line along the bottom shows only the keys that apply to where you are, and
+changes as you browse deeper. The full set is always `:help`.
 
 ### Recent searches
 

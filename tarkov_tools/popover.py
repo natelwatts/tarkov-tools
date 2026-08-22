@@ -294,10 +294,7 @@ class Popover:
         self.qty_target: str | None = None
         self.qty_name = ""
         self.qty_prev_term = ""
-        # 'search' types into the box, 'normal' treats keys as commands.
-        # It opens in search mode so the hotkey is still followed by typing.
-        self.mode = "search"
-        self.vim_keys = bool(load_config()["search"].get("vim_keys", True))
+
         self.status_note = ''
         self._refresh_marks()
         self._build()
@@ -368,9 +365,7 @@ class Popover:
             relief="flat", highlightthickness=0,
         )
         self.entry.pack(side="left", fill="x", expand=True, ipady=8, padx=(0, 10))
-        self.entry.bind("<KeyPress>", self._on_keypress)
         self.entry.bind("<KeyRelease>", self._on_type)
-        self.entry.bind("<slash>", self._start_search)
         self.entry.bind("<Down>", self._nav_down)
         self.entry.bind("<Up>", self._nav_up)
         self.entry.bind("<Return>", self._nav_enter)
@@ -444,11 +439,6 @@ class Popover:
 
         hintbar = tk.Frame(inner, bg=BG_ALT)
         hintbar.pack(fill="x", side="bottom")
-        # Which mode you are in has to be visible: the same keypress either
-        # types a letter or jumps a row, and guessing which is unpleasant.
-        self.mode_label = tk.Label(hintbar, text="", bg=BG_ALT, fg=FG_DIM,
-                                   font=(mono, 9, "bold"))
-        self.mode_label.pack(side="left")
         self.hint = tk.Label(
             hintbar, text="", bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
@@ -555,7 +545,6 @@ class Popover:
         # focuses (and that the gamma watcher identifies by title) is its
         # GA_ROOT ancestor.
         _force_foreground(toplevel_of(self.root.winfo_id()))
-        self._set_mode("search")
         self.entry.focus_force()
         self.entry.select_range(0, "end")
 
@@ -585,50 +574,16 @@ class Popover:
         except Exception:
             pass
 
-    # --- modes ---------------------------------------------------------
-
-    def _set_mode(self, mode: str) -> None:
-        """Switch between typing and commanding.
-
-        Focus never moves: the entry keeps it in both modes and normal-mode
-        keys are swallowed before they reach it. Moving focus to the list
-        instead would mean Tk deciding which widget owns Tab, Escape and the
-        arrow keys, which is exactly the argument this avoids.
-        """
-        if mode == self.mode:
-            return
-        self.mode = mode
-        if mode == "search":
-            self.entry.configure(insertwidth=2)
-        else:
-            self.entry.configure(insertwidth=0)   # no caret when not typing
-        self._update_chrome()
-
-    def _render_mode(self) -> None:
-        if not self.vim_keys:
-            self.mode_label.configure(text="")
-            return
-        # The way out of a mode is printed on the mode itself, so it never
-        # has to be remembered - which is the whole job of this label.
-        searching = self.mode == "search"
-        self.mode_label.configure(
-            text=" SEARCH · Esc to browse " if searching else " NORMAL · / to search ",
-            bg="#3a6ea5" if searching else "#4a4f5a",
-            fg="#e8eaed",
-        )
+    # --- the hint line -------------------------------------------------
 
     # Only ever one line's worth. Listing every shortcut at once overflowed
     # the window and got clipped, which taught nobody anything; the full set
     # lives in :help, and this shows the handful that apply right here.
     HINTS = {
-        ("search", "search"): "Enter open · Tab filter · Ctrl+Enter wiki · Ctrl+H have · :help · :q close",
-        ("normal", "search"): "j k rows · h l filters · Enter open · / search · :help · :q close",
-        ("search", "slots"): "Enter the parts in a category · Esc back · :help · :q close",
-        ("normal", "slots"): "j k rows · Enter parts · Esc back · :help · :q close",
-        ("search", "parts"): "Enter what it fits · Ctrl+H have · Esc back · :help · :q close",
-        ("normal", "parts"): "j k rows · Enter fits · Ctrl+H have · Esc back · :help · :q close",
-        ("search", "fits"): "Enter that gun's parts · Esc back · :help · :q close",
-        ("normal", "fits"): "j k rows · Enter its parts · Esc back · :help · :q close",
+        "search": "↑↓ move · Enter open · Tab filter · Ctrl+Enter wiki · Ctrl+H have · :help · :q close",
+        "slots": "↑↓ move · Enter the parts in a category · Esc back · :help · :q close",
+        "parts": "↑↓ move · Enter what it fits · Ctrl+H have · Esc back · :help · :q close",
+        "fits": "↑↓ move · Enter that gun's parts · Esc back · :help · :q close",
     }
 
     def _flash(self, message: str) -> None:
@@ -654,92 +609,14 @@ class Popover:
             return self.status_note
         if self.qty_target:
             return "type a number · Enter save · 0 removes · Esc cancel"
-        if not self.vim_keys:
-            return ("↑↓ move · Enter open · Tab filter · Ctrl+Enter wiki · "
-                    "Ctrl+H have · :help · :q close")
-        return self.HINTS.get((self.mode, self.view), self.HINTS[("normal", "search")])
+        return self.HINTS.get(self.view, self.HINTS["search"])
 
     def _update_chrome(self) -> None:
-        """Keep the mode badge and the hint line matching what is on screen."""
-        self._render_mode()
+        """Keep the hint line matching what is on screen."""
         try:
             self.hint.configure(text="  " + self._hint_text() + "  ")
         except Exception:
             pass
-
-    def _start_search(self, event=None, keep: bool = False) -> str:
-        """Focus the box for typing. '/' starts fresh, 'i' keeps what is there."""
-        self._set_mode("search")
-        if not keep:
-            self.entry.delete(0, "end")
-            self._on_type()
-        self.entry.focus_set()
-        return "break"
-
-    # h/l move sideways the way j/k move down and up. The sideways axis here
-    # is the filter bar, so they cycle filters; backing out of a level is
-    # Escape and Backspace, which already did that job.
-    NORMAL_KEYS = {
-        "j": "down", "k": "up",
-        "h": "filter-prev", "l": "filter-next",
-        "g": "first", "G": "last",
-        "/": "search", "i": "search-keep", "a": "search-keep",
-    }
-
-    def _on_keypress(self, event=None):
-        """In normal mode a bare key is a command, not a character.
-
-        Returning "break" stops it reaching the entry, so the search box never
-        fills up with navigation keys. Anything with a modifier is left alone -
-        Ctrl+H and friends work identically in both modes.
-        """
-        if not self.vim_keys or self.mode != "normal" or self.qty_target:
-            return None
-        if event.state & 0x0004:          # Ctrl held: not ours to interpret
-            return None
-
-        action = self.NORMAL_KEYS.get(event.char)
-        if action == "down":
-            self._move(1)
-        elif action == "up":
-            self._move(-1)
-        elif action == "first":
-            self._jump_to(0)
-        elif action == "last":
-            self._jump_to(10 ** 6)
-        elif action == "filter-prev":
-            self._prev_filter()
-        elif action == "filter-next":
-            self._next_filter()
-        elif action == "search":
-            self._start_search()
-        elif action == "search-keep":
-            self._start_search(keep=True)
-        elif event.char.isdigit():
-            # Bare digits jump filters, the way Ctrl+digit does while typing.
-            index = FILTER_KEYS.find(event.char)
-            if index >= 0:
-                self._jump_filter(index)
-        else:
-            return "break"   # swallow anything else rather than typing it
-        return "break"
-
-    def _jump_to(self, index: int) -> None:
-        rows = {
-            "slots": self.slot_entries,
-            "parts": self.part_entries,
-            "fits": self.fits_entries,
-        }.get(self.view, self.results)
-        if not rows:
-            return
-        index = max(0, min(len(rows) - 1, index))
-        self.listbox.selection_clear(0, "end")
-        self.listbox.selection_set(index)
-        self.listbox.see(index)
-        if self.view == "slots":
-            self._render_slot(index)
-        else:
-            self._render(rows[index]["id"])
 
     def _pump(self) -> None:
         try:
@@ -1377,22 +1254,13 @@ class Popover:
     HELP = [
         ("Tarkov Tools\n\n", "head"),
 
-        ("  two modes, and how to swap\n", "head"),
-        ("    Esc             ", "label"), ("SEARCH -> NORMAL, then back out a level\n", None),
-        ("    /               ", "label"), ("NORMAL -> SEARCH, starting a fresh search\n", None),
-        ("    i               ", "label"), ("NORMAL -> SEARCH, keeping what is there\n", None),
-        ("    SEARCH          ", "label"), ("typing goes in the box\n", None),
-        ("    NORMAL          ", "label"), ("keys are commands - j k move, no typing\n", None),
-        ("    The mode shows bottom-left. Set search.vim_keys false in\n", "dim"),
-        ("    config.json to turn all of this off.\n", "dim"),
-
-        ("\n  moving about\n", "head"),
-        ("    j k  /  Up Down ", "label"), ("next row, previous row\n", None),
-        ("    h l             ", "label"), ("previous filter, next filter\n", None),
-        ("    g G             ", "label"), ("first, last\n", None),
+        ("  moving about\n", "head"),
+        ("    type            ", "label"), ("search - the box always has the keyboard\n", None),
+        ("    Up Down         ", "label"), ("next row, previous row\n", None),
         ("    Enter           ", "label"), ("open what is highlighted\n", None),
         ("    Esc  /  Backspace ", "label"), ("back one level (never closes)\n", None),
-        ("    Tab  /  1-0 y-p ", "label"), ("switch filter (Ctrl+key while typing)\n", None),
+        ("    Tab  /  Left Right ", "label"), ("switch filter\n", None),
+        ("    Ctrl+1-0 y-p    ", "label"), ("jump straight to a filter\n", None),
 
         ("\n  going deeper (Enter)\n", "head"),
         ("    on a gun        ", "label"), ("Ammo first, then attachment categories\n", None),
@@ -1530,8 +1398,6 @@ class Popover:
             # The box is collecting a count, not a search term.
             self._render_quantity_prompt()
             return
-        if event is not None and self.vim_keys and self.mode == "normal":
-            return   # the keypress was a command; the term did not change
         self._update_chrome()
         term = self.entry.get().strip()
         if term.startswith(":"):
@@ -1574,19 +1440,9 @@ class Popover:
                               ("or :help for the keys\n", "dim")])
 
     def _on_escape(self, event=None) -> str:
-        """Escape leaves typing first, then backs out a level, then hides.
-
-        The first press always drops SEARCH into NORMAL, even with nothing on
-        screen. Making it conditional on having results meant that at the top
-        level - the one place you are most likely to be - Escape skipped the
-        mode change and closed the window, so there was no way to reach NORMAL
-        from a fresh box.
-        """
+        """Escape backs out one level. It never closes the window."""
         if self.qty_target:
             return self._cancel_quantity()
-        if self.vim_keys and self.mode == "search":
-            self._set_mode("normal")
-            return "break"
         return self._go_back()
 
     def _on_backspace(self, event=None):
@@ -1778,7 +1634,6 @@ class Popover:
             if chosen.get("kind") == "recent":
                 self.entry.delete(0, "end")
                 self.entry.insert(0, chosen["name"])
-                self._set_mode("search")
                 self._on_type()
                 return "break"
             searchmod.record_search(self.conn, self.entry.get().strip())

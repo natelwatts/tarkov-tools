@@ -4,7 +4,8 @@
     "brightness": 0.0,
     "contrast": 1.0,
     "exes": [
-      "EscapeFromTarkov.exe"
+      "EscapeFromTarkov.exe",
+      "EscapeFromTarkovArena.exe"
     ],
     "poll_seconds": 0.35,
     "game_monitor_only": true,

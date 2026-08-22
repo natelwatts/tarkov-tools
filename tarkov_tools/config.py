@@ -21,7 +21,9 @@ DEFAULTS: dict[str, Any] = {
         "value": 1.5,
         "brightness": 0.0,
         "contrast": 1.0,
-        "exes": ["EscapeFromTarkov.exe"],
+        # Arena is a separate executable, and installs beside the main
+        # game rather than replacing it, so both are watched.
+        "exes": ["EscapeFromTarkov.exe", "EscapeFromTarkovArena.exe"],
         "poll_seconds": 0.35,
         "game_monitor_only": True,
         # Our own windows that should not count as "focus left the game".

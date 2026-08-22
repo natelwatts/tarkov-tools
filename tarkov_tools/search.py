@@ -359,6 +359,55 @@ def quantities(conn: sqlite3.Connection, list_name: str) -> dict[str, int]:
         return {}
 
 
+# --- notes --------------------------------------------------------------
+
+def notes(conn: sqlite3.Connection, kind: str) -> list[str]:
+    """Everything saved under one kind, oldest first."""
+    try:
+        # rowid breaks the tie rather than the text: two notes saved in the
+        # same instant would otherwise sort by case, putting "Penicillin"
+        # above "peanuts" for no reason a reader could see.
+        return [r["text"] for r in conn.execute(
+            "SELECT text FROM notes WHERE kind = ? ORDER BY added_at, rowid",
+            (kind,))]
+    except sqlite3.Error:
+        return []
+
+
+def add_note(conn: sqlite3.Connection, kind: str, text: str) -> bool:
+    """Save one note. False if it was already there, so callers can say so."""
+    text = (text or "").strip()
+    if not text:
+        return False
+    existing = conn.execute(
+        "SELECT 1 FROM notes WHERE kind = ? AND text = ? COLLATE NOCASE",
+        (kind, text),
+    ).fetchone()
+    if existing:
+        return False
+    conn.execute(
+        "INSERT INTO notes (kind, text, added_at) "
+        "VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now'))",
+        (kind, text),
+    )
+    conn.commit()
+    return True
+
+
+def remove_note(conn: sqlite3.Connection, kind: str, text: str) -> str | None:
+    """Delete one note, matched without case. Returns what was removed."""
+    row = conn.execute(
+        "SELECT text FROM notes WHERE kind = ? AND text = ? COLLATE NOCASE",
+        (kind, (text or "").strip()),
+    ).fetchone()
+    if not row:
+        return None
+    conn.execute("DELETE FROM notes WHERE kind = ? AND text = ?",
+                 (kind, row["text"]))
+    conn.commit()
+    return row["text"]
+
+
 def stash_contents(conn: sqlite3.Connection, list_name: str = "have",
                    limit: int = 500) -> list[dict[str, Any]]:
     """Everything on a list with what it is worth, most valuable line first."""

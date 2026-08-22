@@ -7,7 +7,7 @@ Two things for Escape from Tarkov, in one small Windows app:
   alt-tabbing to the wiki.
 - **Automatic gamma.** Your brightness setting applies while Tarkov has focus,
   and only on the monitor the game is on. Alt-tab to Discord and your desktop
-  looks normal again.
+  looks normal again. Arena counts as the game too.
 
 ```
  search  m855a1
@@ -87,12 +87,16 @@ on, so extraction points share the one search bar with everything else.
 | `Ctrl+Shift+Enter` | open its flea market page |
 | `F5` | refresh prices, and quest progress if connected |
 | `:help` | every key, without leaving the overlay |
+| `:allergy` | allergies you want kept to hand |
 | `:q` | close the window, everything keeps running |
 | `:q!` | quit properly - stops the gamma watcher and restores gamma |
 
 `Ctrl` + `hjkl` moves as well as the arrows do: `j`/`k` down and up the rows,
 `h`/`l` left and right along the filters. It is not a mode - nothing is
 switched on, and the box is still taking letters.
+
+Rows **wrap**: `Up` from the top row takes you to the bottom, and `Down` from
+the bottom comes back to the top, the same way the filter chips do.
 
 **Nothing but `:q` closes the window.** `Esc` at the top level clears whatever
 you typed; press it again on an empty box and it says so and stays put, rather
@@ -223,6 +227,24 @@ uv run tarkov-tools stash --clear      # empty the list
 
 ---
 
+## Allergies
+
+Nothing to do with the game - the overlay is the thing already bound to a
+hotkey, so it is a good place to keep something you need to be able to recall
+on the spot.
+
+```
+:allergy                 what is saved
+:allergy peanuts         save one - Enter confirms
+:allergy rm peanuts      take it off again
+```
+
+Notes are kept exactly as you type them, matched without regard to case, and
+stored in the same local database as everything else. Multi-word notes are
+fine: `:allergy shellfish (mild)`.
+
+---
+
 ## The wiki and the map
 
 `Ctrl+Enter` opens whatever is highlighted **on the wiki** - a gun, a round, a
@@ -279,7 +301,8 @@ The token is read-only, stored locally, and never displayed unmasked.
 
 ## Gamma
 
-Your chosen gamma applies **only while Tarkov has focus**, and only on the
+Your chosen gamma applies **only while Tarkov has focus** - Escape from
+Tarkov or Escape from Tarkov: Arena, both watched by default - and only on the
 monitor the game window is on. The original setting is always restored on the
 way out, so a crash cannot leave your desktop washed out.
 
@@ -341,6 +364,7 @@ Useful ones:
 | setting | what it does |
 |---|---|
 | `gamma.value` | how bright, while the game has focus |
+| `gamma.exes` | which executables count as the game (both Tarkov and Arena by default) |
 | `gamma.game_monitor_only` | leave your other monitors alone |
 | `search.hotkey` | what summons the overlay |
 | `search.arrow_keys_switch_filters` | `always`, `edges` (only when the caret can't move), or `never` |

@@ -199,6 +199,17 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT
 );
 
+-- Free text you want the overlay to hold onto, grouped by kind
+-- ('allergy' so far). Nothing to do with the game - the overlay is the
+-- thing already bound to a hotkey, so it is where a note gets looked up.
+CREATE TABLE IF NOT EXISTS notes (
+    kind     TEXT NOT NULL,
+    text     TEXT NOT NULL,
+    added_at TEXT,
+    PRIMARY KEY (kind, text)
+);
+CREATE INDEX IF NOT EXISTS idx_notes_kind ON notes(kind);
+
 -- Full text search over item names for the popover.
 CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
     id UNINDEXED,
@@ -266,6 +277,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
             rounds  INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_ammo_boxes_ammo ON ammo_boxes(ammo_id);
+        CREATE TABLE IF NOT EXISTS notes (
+            kind     TEXT NOT NULL,
+            text     TEXT NOT NULL,
+            added_at TEXT,
+            PRIMARY KEY (kind, text)
+        );
+        CREATE INDEX IF NOT EXISTS idx_notes_kind ON notes(kind);
     """)
     conn.commit()
 

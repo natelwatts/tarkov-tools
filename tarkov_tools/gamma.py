@@ -1,4 +1,4 @@
-"""Display gamma control, applied only while Escape from Tarkov has focus.
+"""Display gamma control, applied only while Tarkov has focus.
 
 This talks to the display driver via SetDeviceGammaRamp. It never touches
 the game process. Setting gamma here is equivalent to moving the slider in
@@ -28,7 +28,7 @@ from .winapi import (
     window_title,
 )
 
-DEFAULT_TARKOV_EXES = ("EscapeFromTarkov.exe",)
+DEFAULT_TARKOV_EXES = ("EscapeFromTarkov.exe", "EscapeFromTarkovArena.exe")
 
 # Windows belonging to this toolkit that should NOT count as "focus lost".
 # Opening the search popover moves focus away from the game, and without

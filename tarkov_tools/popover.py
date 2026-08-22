@@ -14,6 +14,7 @@ import ctypes
 import queue
 import sqlite3
 import threading
+import time
 import tkinter as tk
 from ctypes import wintypes
 from tkinter import font as tkfont
@@ -296,6 +297,9 @@ class Popover:
         self.qty_prev_term = ""
 
         self.status_note = ''
+        # When Ctrl+G was last pressed, so the second of a pair can be told
+        # from a fresh one.
+        self._last_g = float("-inf")
         # What the box held the last time the results were built, so a
         # keystroke that changed nothing can be told from one that did.
         self._last_term: str | None = None
@@ -396,6 +400,7 @@ class Popover:
         # switch filter whatever arrow_keys_switch_filters is set to.
         self.entry.bind("<Control-h>", self._prev_filter)
         self.entry.bind("<Control-l>", self._next_filter)
+        self.entry.bind("<Control-g>", self._jump_ends)
         for position, key in enumerate(FILTER_KEYS):
             self.entry.bind(f"<Control-Key-{key}>",
                             lambda e, n=position: self._jump_filter(n))
@@ -576,8 +581,18 @@ class Popover:
         self.events.put("toggle")
 
     def _reprice(self) -> None:
-        """Redraw the current detail now that prices have changed."""
+        """Redraw the current detail now that prices have changed.
+
+        Redrawing the pane you are already reading should not move it. A
+        fresh pane starts at the top, so the scroll position is put back by
+        hand - otherwise a price arriving mid-read pulls you off whatever you
+        had scrolled down to.
+        """
         self._flash("flea prices updated")
+        try:
+            where = self.detail.yview()[0]
+        except Exception:
+            where = 0.0
         try:
             if self.view == "search":
                 entry = self._current_result()
@@ -587,6 +602,7 @@ class Popover:
                 subject = self._current_subject()
                 if subject:
                     self._render(subject["id"])
+            self.detail.yview_moveto(where)
         except Exception:
             pass
 
@@ -1286,6 +1302,7 @@ class Popover:
         ("    type            ", "label"), ("search - the box always has the keyboard\n", None),
         ("    Up Down         ", "label"), ("next row, previous row\n", None),
         ("    Ctrl+j  Ctrl+k  ", "label"), ("the same, without leaving the home row\n", None),
+        ("    Ctrl+g          ", "label"), ("the last row - press it twice for the first\n", None),
         ("    Enter           ", "label"), ("open what is highlighted\n", None),
         ("    Esc  /  Backspace ", "label"), ("back a level, or clear the search (never closes)\n", None),
         ("    Tab  /  Left Right ", "label"), ("switch filter\n", None),
@@ -1330,6 +1347,8 @@ class Popover:
         ("    empty box       ", "label"), ("shows what you searched recently\n", None),
         ("    drag the top    ", "label"), ("move the window anywhere\n", None),
         ("    :help           ", "label"), ("this, any time\n", None),
+        ("    :allergy        ", "label"), ("allergies you want to keep to hand\n", None),
+        ("    :allergy peanuts", "label"), ("  save one - :allergy rm peanuts drops it\n", None),
         ("    :q              ", "label"), ("close the window, keep running\n", None),
         ("    :q!             ", "label"), ("quit everything, restore gamma\n", None),
     ]
@@ -1339,6 +1358,74 @@ class Popover:
     CLOSE_WORDS = (":q", ":quit", ":x", ":close")
     QUIT_WORDS = (":q!", ":quit!", ":qa", ":qa!", ":wq")
     HELP_WORDS = (":help", ":h", ":?")
+    ALLERGY_WORDS = (":allergy", ":allergies")
+    # How long a second Ctrl+G still counts as the pair.
+    G_DOUBLE_SECONDS = 0.5
+    REMOVE_WORDS = ("rm", "remove", "del", "delete")
+
+    def _allergy_command(self, term: str) -> tuple[str, str] | None:
+        """(action, text) for an :allergy command, or None if it is not one.
+
+        Only the command word is lowercased - the note is stored as typed,
+        because "Penicillin" is worth keeping capitalised.
+        """
+        head, _, rest = term.partition(" ")
+        if head.lower() not in self.ALLERGY_WORDS:
+            return None
+        rest = rest.strip()
+        first, _, tail = rest.partition(" ")
+        if first.lower() in self.REMOVE_WORDS and tail.strip():
+            return ("remove", tail.strip())
+        return ("add" if rest else "list", rest)
+
+    def _allergy_detail(self, action: str, text: str) -> list[tuple[str, str]]:
+        """The pane for an :allergy command, whichever form it took."""
+        saved = searchmod.notes(self.conn, "allergy")
+        out: list[tuple[str, str]] = [("Allergies\n\n", "head")]
+
+        if action == "add":
+            already = any(text.lower() == s.lower() for s in saved)
+            out.append(("  already saved\n\n", "dim") if already else
+                       ("  Press Enter to save\n\n", "label"))
+            out.append((f"  {text}\n\n", "warn" if already else "good"))
+        elif action == "remove":
+            match = next((s for s in saved if s.lower() == text.lower()), None)
+            if match:
+                out.append(("  Press Enter to remove\n\n", "label"))
+                out.append((f"  {match}\n\n", "warn"))
+            else:
+                out.append((f"  {text} is not on the list\n\n", "dim"))
+
+        if saved:
+            out.append((f"  SAVED  ({len(saved)})\n", "head"))
+            for note in saved:
+                out.append((f"    {note}\n", None))
+            out.append(("\n", None))
+        else:
+            out.append(("  nothing saved yet\n\n", "dim"))
+
+        out.append(("  :allergy peanuts       ", "label"))
+        out.append(("save one\n", "dim"))
+        out.append(("  :allergy rm peanuts    ", "label"))
+        out.append(("take it off\n", "dim"))
+        out.append(("  :allergy               ", "label"))
+        out.append(("this list, any time\n", "dim"))
+        return out
+
+    def _run_allergy(self, action: str, text: str) -> None:
+        """Save or remove, then leave the list on screen as confirmation."""
+        if action == "add":
+            saved = searchmod.add_note(self.conn, "allergy", text)
+            self._flash(f"saved {text}" if saved else f"{text} was already saved")
+        elif action == "remove":
+            removed = searchmod.remove_note(self.conn, "allergy", text)
+            self._flash(f"removed {removed}" if removed else f"{text} was not saved")
+        if action in ("add", "remove"):
+            # Empty the box so the next command starts clean, then put the
+            # list back over the results _on_type just drew.
+            self.entry.delete(0, "end")
+            self._on_type()
+        self._set_detail(self._allergy_detail("list", ""))
 
     def _help_open(self) -> bool:
         """True while :help is the pane on screen.
@@ -1381,13 +1468,18 @@ class Popover:
                  "  back. Esc or Backspace to stay.\n", "dim"),
             ])
             return True
+        allergy = self._allergy_command(term)
+        if allergy is not None:
+            self._set_detail(self._allergy_detail(*allergy))
+            return True
         if word.startswith(":") and len(word) > 1:
             self._set_detail([
                 (f"{term}\n\n", "head"),
                 ("  not a command\n\n", "warn"),
-                ("  :help   the keys\n", "label"),
-                ("  :q      close the window\n", "label"),
-                ("  :q!     quit everything\n", "label"),
+                ("  :help     the keys\n", "label"),
+                ("  :allergy  what you cannot eat\n", "label"),
+                ("  :q        close the window\n", "label"),
+                ("  :q!       quit everything\n", "label"),
             ])
             return True
         return False
@@ -1402,6 +1494,10 @@ class Popover:
             return True
         if word in self.QUIT_WORDS:
             self._quit()
+            return True
+        allergy = self._allergy_command(term)
+        if allergy is not None:
+            self._run_allergy(*allergy)
             return True
         return word in self.HELP_WORDS or (word.startswith(":") and len(word) > 1)
 
@@ -1509,15 +1605,18 @@ class Popover:
             return self._go_back()
         return None
 
-    def _move(self, delta: int) -> None:
-        rows = {
+    def _rows(self) -> list[dict]:
+        """The rows on screen, whichever level is showing."""
+        return {
             "slots": self.slot_entries,
             "parts": self.part_entries,
             "fits": self.fits_entries,
         }.get(self.view, self.results)
+
+    def _select_row(self, index: int) -> None:
+        rows = self._rows()
         if not rows:
             return
-        index = max(0, min(len(rows) - 1, self._current_row() + delta))
         self.listbox.selection_clear(0, "end")
         self.listbox.selection_set(index)
         self.listbox.see(index)
@@ -1525,6 +1624,34 @@ class Popover:
             self._render_slot(index)
         else:
             self._render(rows[index]["id"])
+
+    def _move(self, delta: int) -> None:
+        rows = self._rows()
+        if not rows:
+            return
+        # Wraps, the way the filter chips do: off the bottom comes back to the
+        # top. Stopping dead at the ends made the last row the awkward one to
+        # reach from the first.
+        self._select_row((self._current_row() + delta) % len(rows))
+
+    def _jump_ends(self, event=None) -> str:
+        """Ctrl+G to the bottom; twice in quick succession to the top.
+
+        vim's G and gg. The first press acts at once rather than waiting to
+        see whether a second one is coming: pausing before every jump to the
+        bottom would be worse than the top arriving a beat late. A third
+        press starts the pair over rather than counting as another double.
+        """
+        now = time.monotonic()
+        double = (now - self._last_g) <= self.G_DOUBLE_SECONDS
+        self._last_g = float("-inf") if double else now
+        if self._help_open():
+            self.detail.yview_moveto(0.0 if double else 1.0)
+            return "break"
+        rows = self._rows()
+        if rows:
+            self._select_row(0 if double else len(rows) - 1)
+        return "break"
 
     def _nav_down(self, event=None):
         if self._help_open():

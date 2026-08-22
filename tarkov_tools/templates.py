@@ -455,6 +455,39 @@ def import_templates(conn, templates: dict, locale: dict, verbose: bool = True) 
     return dbmod.counts(conn)
 
 
+def import_ammo_boxes(conn, templates: dict, verbose: bool = True) -> int:
+    """Record which round each ammo pack holds, and how many.
+
+    The flea market trades ammo by the box, never by the round, so a box is
+    the only place a per-round price can come from. A template says which
+    cartridge fills it and how many fit:
+
+        StackSlots[0]._props.filters[0].Filter[0]  ->  the round
+        StackSlots[0]._max_count                   ->  how many
+    """
+    rows = []
+    for item_id, template in templates.items():
+        slots = (template.get("_props") or {}).get("StackSlots") or []
+        if not slots:
+            continue
+        slot = slots[0]
+        count = slot.get("_max_count")
+        filters = (slot.get("_props") or {}).get("filters") or [{}]
+        contained = filters[0].get("Filter") or []
+        if count and len(contained) == 1:
+            rows.append((item_id, contained[0], int(count)))
+
+    conn.executemany(
+        "INSERT INTO ammo_boxes (box_id, ammo_id, rounds) VALUES (?, ?, ?) "
+        "ON CONFLICT(box_id) DO UPDATE SET ammo_id = excluded.ammo_id, "
+        "rounds = excluded.rounds",
+        rows,
+    )
+    if verbose:
+        print(f"  ammo boxes: {len(rows)}")
+    return len(rows)
+
+
 def run_import(items_path: Path | None = None,
                locale_path: Path | None = None,
                do_download: bool = False,
@@ -477,6 +510,7 @@ def run_import(items_path: Path | None = None,
     conn = dbmod.connect()
     with conn:
         counts = import_templates(conn, templates, locale, verbose)
+        counts["ammo_boxes"] = import_ammo_boxes(conn, templates, verbose)
         dbmod.set_meta(conn, "last_template_import", str(Path(items_path)))
 
         # Extraction points live in the location files rather than the item

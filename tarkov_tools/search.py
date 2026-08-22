@@ -510,16 +510,37 @@ def reachable_parts(conn: sqlite3.Connection, root_id: str,
     return groups
 
 
+# Not a real attachment slot - a way into the rounds a gun fires, which is
+# the first thing worth knowing about a weapon you are holding.
+AMMO_SLOT = "__ammo__"
+
+
 def weapon_slots(conn: sqlite3.Connection, weapon_id: str) -> list[dict]:
-    """Attachment categories for a weapon, most options first."""
+    """What goes with a weapon: its ammo first, then attachment categories.
+
+    Ammo leads because "what do I feed it, and what is that worth" is the
+    question a gun raises in a raid, where which foregrip fits is not.
+    """
     groups = reachable_parts(conn, weapon_id)
     out = [
         {"slot": group, "label": slot_label(group), "count": len(ids)}
         for group, ids in groups.items()
-        if group != "patron_in_weapon"  # that is ammo, already shown elsewhere
+        # The chamber is ammo, offered as its own section below.
+        if group != "patron_in_weapon"
     ]
     out.sort(key=lambda entry: (-entry["count"], entry["label"]))
+
+    rounds = len(ammo_for_weapon(conn, weapon_id))
+    if rounds:
+        out.insert(0, {"slot": AMMO_SLOT, "label": "Ammo", "count": rounds})
     return out
+
+
+def slot_entries(conn: sqlite3.Connection, weapon_id: str, slot: str) -> list[dict]:
+    """The rows behind one section - rounds for ammo, parts for anything else."""
+    if slot == AMMO_SLOT:
+        return ammo_for_weapon(conn, weapon_id)
+    return parts_for_slot(conn, weapon_id, slot)
 
 
 def guns_for_part(conn: sqlite3.Connection, part_id: str,
@@ -621,6 +642,33 @@ def ammo_for_weapon(conn, weapon_id: str) -> list[dict]:
             ORDER BY a.penetration_power DESC, a.damage DESC""",
         (weapon_id,),
     )]
+
+
+def ammo_price(conn, ammo_id: str) -> dict[str, Any] | None:
+    """What one round costs, worked back from the pack it is sold in.
+
+    The flea trades ammo by the box, so a single round has no listing of its
+    own. The cheapest box per round wins, which is the number that decides
+    what you actually load.
+    """
+    row = conn.execute(
+        """
+        SELECT b.rounds, p.price AS box_price, i.name AS box_name,
+               p.price * 1.0 / b.rounds AS per_round
+        FROM ammo_boxes b
+        JOIN flea_prices p ON p.item_id = b.box_id
+        JOIN items i ON i.id = b.box_id
+        WHERE b.ammo_id = ? AND b.rounds > 0
+        ORDER BY per_round ASC
+        LIMIT 1
+        """,
+        (ammo_id,),
+    ).fetchone()
+    if not row:
+        return None
+    out = dict(row)
+    out["per_round"] = round(out["per_round"])
+    return out
 
 
 def magazines_for_weapon(conn, weapon_id: str) -> list[dict]:
@@ -744,6 +792,9 @@ def describe(conn: sqlite3.Connection, item_id: str) -> dict[str, Any]:
     if kind == "ammo":
         stats = conn.execute("SELECT * FROM ammo WHERE item_id = ?", (item_id,)).fetchone()
         out["stats"] = dict(stats) if stats else {}
+        # Rounds are never listed individually, so the price comes from the
+        # pack they are sold in.
+        out["ammo_price"] = ammo_price(conn, item_id)
         out["weapons"] = weapons_for_ammo(conn, item_id)
         out["magazines"] = magazines_for_ammo(conn, item_id)
     elif kind == "weapon":

@@ -308,6 +308,10 @@ def _print_detail(data: dict) -> None:
         if abs(flea.get("change_pct") or 0) >= 0.5:
             line += f"   {flea['change_pct']:+.0f}%"
         print(line)
+    elif data.get("ammo_price"):
+        box = data["ammo_price"]
+        print(f"  flea {money(box['per_round'])} RUB/round"
+              f"   ({money(box['box_price'])} for {box['rounds']})")
     elif item.get("avg_24h_price"):
         print(f"  flea {money(item['avg_24h_price'])} RUB")
     else:

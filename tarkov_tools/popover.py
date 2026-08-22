@@ -282,6 +282,9 @@ class Popover:
         self.slot_weapon: dict | None = None
         self.slot_entries: list[dict] = []
         self.part_entries: list[dict] = []
+        # Which kind of row part_entries holds - 'ammo' or 'part'. They are
+        # ranked and displayed on different numbers.
+        self.part_kind = "part"
         self.fits_entries: list[dict] = []
         self.back: list[dict] = []
         self.have: set[str] = set()
@@ -955,6 +958,7 @@ class Popover:
             "slot_weapon": self.slot_weapon,
             "slot_entries": self.slot_entries,
             "part_entries": self.part_entries,
+            "part_kind": self.part_kind,
             "fits_entries": self.fits_entries,
         })
 
@@ -973,6 +977,7 @@ class Popover:
         self.slot_weapon = frame["slot_weapon"]
         self.slot_entries = frame["slot_entries"]
         self.part_entries = frame["part_entries"]
+        self.part_kind = frame.get("part_kind", "part")
         self.fits_entries = frame["fits_entries"]
         view, index = frame["view"], frame["index"]
         if view == "slots":
@@ -1034,13 +1039,12 @@ class Popover:
         if index >= len(self.slot_entries):
             return
         entry = self.slot_entries[index]
-        parts = searchmod.parts_for_slot(
-            self.conn, self.slot_weapon["id"], entry["slot"]
-        )
-        if not parts:
+        rows = searchmod.slot_entries(self.conn, self.slot_weapon["id"], entry["slot"])
+        if not rows:
             return
         self._descend()
-        self.part_entries = parts
+        self.part_entries = rows
+        self.part_kind = "ammo" if entry["slot"] == searchmod.AMMO_SLOT else "part"
         self._show_parts(0)
 
     def _show_parts(self, index: int = 0) -> None:
@@ -1048,19 +1052,59 @@ class Popover:
         self.view = "parts"
         self._update_chrome()
         self.listbox.delete(0, "end")
+        ammo = self.part_kind == "ammo"
         for part in self.part_entries:
             mark = self._marks(part.get("id") or "")
             name = (part.get("name") or "").replace("[DEMO] ", "")
-            # Ergo earns the space a kind tag would take: every row here is a
-            # part, and the list is ordered by it.
-            self.listbox.insert(
-                "end", f"{_signed(part.get('ergonomics')):>4} {mark:<4}{name[:28]}"
-            )
+            # Lead with whatever the list is sorted on, in the space a kind
+            # tag would take: penetration for rounds, ergonomics for parts.
+            lead = (f"{part.get('penetration_power') or 0:>4}" if ammo
+                    else f"{_signed(part.get('ergonomics')):>4}")
+            self.listbox.insert("end", f"{lead} {mark:<4}{name[:28]}")
         index = max(0, min(len(self.part_entries) - 1, index))
         self.listbox.selection_clear(0, "end")
         self.listbox.selection_set(index)
         self.listbox.see(index)
         self._render(self.part_entries[index]["id"])
+
+    def _render_ammo_slot(self, entry: dict) -> None:
+        """Every round this gun fires, hardest-hitting first, with prices.
+
+        Penetration and damage decide what to load; the price decides whether
+        you can afford to. They are worth seeing together.
+        """
+        weapon = self.slot_weapon
+        rounds = searchmod.ammo_for_weapon(self.conn, weapon["id"])
+        name = (weapon.get("name") or "").replace("[DEMO] ", "")
+        out: list[tuple[str, str]] = [
+            (f"{name}\n", "head"),
+            (f"  Ammo - {len(rounds)} rounds\n\n", "dim"),
+            ("     pen   dmg  per rd  round\n", "dim"),
+        ]
+        for row in rounds:
+            priced = searchmod.ammo_price(self.conn, row.get("id") or "")
+            out.append((f"  {row.get('penetration_power') or 0:>6}", "good"))
+            out.append((f"  {row.get('damage') or 0:>4}", None))
+            out.append((f"  {_fmt_price(priced['per_round']) if priced else '-':>8}",
+                        "dim"))
+            mark = self._marks(row.get("id") or "")
+            out.append((f"  {mark:<4}", "good" if mark else "dim"))
+            out.append((f"{(row.get('name') or '')[:44]}\n", None))
+        if not rounds:
+            out.append(("    no ammo recorded\n", "dim"))
+        out.append(("\n  Per round, worked back from the pack it is sold in -\n"
+                    "  the flea never lists single rounds. '-' means banned.\n", "dim"))
+        out.append(("  Enter walks these as rows you can mark or open.\n", "dim"))
+        self._set_detail(out)
+
+    def _flea_price(self, item_id: str):
+        try:
+            row = self.conn.execute(
+                "SELECT price FROM flea_prices WHERE item_id = ?", (item_id,)
+            ).fetchone()
+            return row["price"] if row else None
+        except Exception:
+            return None
 
     def _enter_fits(self) -> None:
         """List the weapons a part goes on, as rows to walk through.
@@ -1096,6 +1140,9 @@ class Popover:
     def _render_slot(self, index: int) -> None:
         entry = self.slot_entries[index]
         weapon = self.slot_weapon
+        if entry["slot"] == searchmod.AMMO_SLOT:
+            self._render_ammo_slot(entry)
+            return
         parts = searchmod.parts_for_slot(self.conn, weapon["id"], entry["slot"])
         name = (weapon.get("name") or "").replace("[DEMO] ", "")
         out: list[tuple[str, str]] = [
@@ -1348,7 +1395,8 @@ class Popover:
         ("    Tab  /  1-0 y-p ", "label"), ("switch filter (Ctrl+key while typing)\n", None),
 
         ("\n  going deeper (Enter)\n", "head"),
-        ("    on a gun        ", "label"), ("its attachment categories\n", None),
+        ("    on a gun        ", "label"), ("Ammo first, then attachment categories\n", None),
+        ("    on Ammo          ", "label"), ("every round it fires, with prices\n", None),
         ("    on a category   ", "label"), ("the parts that fit, best ergo first\n", None),
         ("    on a part       ", "label"), ("every weapon it goes on\n", None),
         ("    on an extract   ", "label"), ("the wiki map, zoomed out, exit marked\n", None),
@@ -1911,6 +1959,14 @@ class Popover:
         """
         flea = data.get("flea")
         if not flea:
+            # Ammo is sold by the box, so a round's price comes from the pack.
+            box = data.get("ammo_price")
+            if box:
+                return [
+                    ("  flea ", "label"),
+                    (f"{_fmt_price(box['per_round'])} RUB/round", "good"),
+                    (f"   {_fmt_price(box['box_price'])} for {box['rounds']}\n", "dim"),
+                ]
             price = (data.get("item") or {}).get("avg_24h_price")
             if price:
                 return [(f"  flea {_fmt_price(price)} RUB\n", "dim")]

@@ -110,6 +110,22 @@ removed.
 **Items with no price are not missing** - they are the ones banned from the
 flea market, and the tool says so rather than showing a blank.
 
+### Ammo is priced by the box
+
+The snapshot has **no entry for a single round** - 0 of 208 - because the flea
+does not trade them. It trades ammo packs, and covers 82% of those. So a
+round's price is worked back from the cheapest pack it is sold in:
+
+```
+5.56x45mm M855A1   [ammo]
+  flea 2,690 RUB/round   (134,484 for 50)
+```
+
+The pack contents come from the item templates
+(`StackSlots[0]` names the round and holds a `_max_count`), which links 213
+boxes and gives **143 of 208 rounds a price**. The rest - M995, SSA AP and
+friends - genuinely cannot be traded, and say so.
+
 ### When an item has nothing
 
 Of 4,613 items, 3,379 have a market page and the rest split two ways, so
@@ -264,8 +280,11 @@ saving.
   magazine that fits sorted by capacity, and which traders sell it
 - Search a **round** → every gun that fires it and every magazine that holds it
 - Search a **magazine** → what it accepts and what accepts it
-- **Enter on a gun** → its attachment categories; arrow through them to see
-  every part that fits, sorted by ergonomics then recoil.
+- **Enter on a gun** → **Ammo first**, then its attachment categories. Ammo
+  leads because "what do I feed it, and what does that cost" is the question
+  a gun raises in a raid; which foregrip fits is not.
+- **Enter on Ammo** → every round it fires, hardest-hitting first, each with
+  a price per round. Walk them, mark them, open one on the wiki.
 - **Enter on a category** → those parts as rows of their own, so you can walk
   them one at a time, mark them, or open one on the wiki.
 - **Enter on a part** → every weapon it fits, as rows. The detail pane only

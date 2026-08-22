@@ -187,6 +187,13 @@ CREATE TABLE IF NOT EXISTS recent_searches (
     last_used TEXT
 );
 
+CREATE TABLE IF NOT EXISTS ammo_boxes (
+    box_id  TEXT PRIMARY KEY,
+    ammo_id TEXT NOT NULL,
+    rounds  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ammo_boxes_ammo ON ammo_boxes(ammo_id);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -253,6 +260,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
             uses      INTEGER NOT NULL DEFAULT 1,
             last_used TEXT
         );
+        CREATE TABLE IF NOT EXISTS ammo_boxes (
+            box_id  TEXT PRIMARY KEY,
+            ammo_id TEXT NOT NULL,
+            rounds  INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_ammo_boxes_ammo ON ammo_boxes(ammo_id);
     """)
     conn.commit()
 

@@ -569,7 +569,7 @@ class Popover:
 
     def _reprice(self) -> None:
         """Redraw the current detail now that prices have changed."""
-        self.status_note = "flea prices updated"
+        self._flash("flea prices updated")
         try:
             if self.view == "search":
                 entry = self._current_result()
@@ -618,22 +618,42 @@ class Popover:
     # the window and got clipped, which taught nobody anything; the full set
     # lives in :help, and this shows the handful that apply right here.
     HINTS = {
-        ("search", "search"): "Enter open · Tab filter · Ctrl+Enter wiki · Ctrl+H have · :help",
-        ("normal", "search"): "j k rows · h l filters · Enter open · / search · :help",
-        ("search", "slots"): "Enter the parts in a category · Esc back · :help",
-        ("normal", "slots"): "j k rows · Enter parts · Esc back · :help",
-        ("search", "parts"): "Enter what it fits · Ctrl+H have · Esc back · :help",
-        ("normal", "parts"): "j k rows · Enter fits · Ctrl+H have · Esc back · :help",
-        ("search", "fits"): "Enter that gun's parts · Esc back · :help",
-        ("normal", "fits"): "j k rows · Enter its parts · Esc back · :help",
+        ("search", "search"): "Enter open · Tab filter · Ctrl+Enter wiki · Ctrl+H have · :help · :q close",
+        ("normal", "search"): "j k rows · h l filters · Enter open · / search · :help · :q close",
+        ("search", "slots"): "Enter the parts in a category · Esc back · :help · :q close",
+        ("normal", "slots"): "j k rows · Enter parts · Esc back · :help · :q close",
+        ("search", "parts"): "Enter what it fits · Ctrl+H have · Esc back · :help · :q close",
+        ("normal", "parts"): "j k rows · Enter fits · Ctrl+H have · Esc back · :help · :q close",
+        ("search", "fits"): "Enter that gun's parts · Esc back · :help · :q close",
+        ("normal", "fits"): "j k rows · Enter its parts · Esc back · :help · :q close",
     }
 
+    def _flash(self, message: str) -> None:
+        """Say something in the hint line for a moment.
+
+        These confirmations were being written to `status_note` and rendered
+        nowhere, so every "holding 12" and "removed X" happened silently.
+        """
+        self.status_note = message
+        self._update_chrome()
+        try:
+            self.root.after(2500, self._clear_flash)
+        except Exception:
+            pass
+
+    def _clear_flash(self) -> None:
+        if self.status_note:
+            self.status_note = ""
+            self._update_chrome()
+
     def _hint_text(self) -> str:
+        if self.status_note:
+            return self.status_note
         if self.qty_target:
             return "type a number · Enter save · 0 removes · Esc cancel"
         if not self.vim_keys:
             return ("↑↓ move · Enter open · Tab filter · Ctrl+Enter wiki · "
-                    "Ctrl+H have · :help")
+                    "Ctrl+H have · :help · :q close")
         return self.HINTS.get((self.mode, self.view), self.HINTS[("normal", "search")])
 
     def _update_chrome(self) -> None:
@@ -660,7 +680,6 @@ class Popover:
         "j": "down", "k": "up",
         "h": "filter-prev", "l": "filter-next",
         "g": "first", "G": "last",
-        "q": "hide",
         "/": "search", "i": "search-keep", "a": "search-keep",
     }
 
@@ -689,8 +708,6 @@ class Popover:
             self._prev_filter()
         elif action == "filter-next":
             self._next_filter()
-        elif action == "hide":
-            self.hide()
         elif action == "search":
             self._start_search()
         elif action == "search-keep":
@@ -833,7 +850,7 @@ class Popover:
         held = searchmod.set_quantity(self.conn, item_id, "have", int(typed))
         self._refresh_marks()
         self._rebuild_filter_bar()
-        self.status_note = (f"holding {held}" if held else f"removed {name}")
+        self._flash(f"holding {held}" if held else f"removed {name}")
         self._redraw_current()
         return "break"
 
@@ -858,7 +875,7 @@ class Popover:
         held = searchmod.adjust_quantity(self.conn, item_id, "have", delta)
         self._refresh_marks()
         self._rebuild_filter_bar()
-        self.status_note = f"holding {held}" if held else "removed from have"
+        self._flash(f"holding {held}" if held else "removed from have")
         self._redraw_current()
         return "break"
 
@@ -903,7 +920,7 @@ class Popover:
                 self.listbox.selection_set(keep[0])
             self._render(item_id)
         verb = "added to" if now_listed else "removed from"
-        self.status_note = f"{verb} {list_name}"
+        self._flash(f"{verb} {list_name}")
         return "break"
 
     def _refresh_marks(self) -> None:
@@ -942,9 +959,15 @@ class Popover:
         })
 
     def _go_back(self) -> str:
-        """Step back up one level, or hide when already at the top."""
+        """Step back up one level. At the top it stays put.
+
+        Escape used to close the window from here, which made the key you
+        press constantly to leave a mode or a level also the key that
+        dismisses the thing you are reading. Closing is :q now, and nothing
+        else.
+        """
         if not self.back:
-            self.hide()
+            self._flash("already at the top - :q closes the window")
             return "break"
         frame = self.back.pop()
         self.slot_weapon = frame["slot_weapon"]
@@ -1308,7 +1331,7 @@ class Popover:
         ("Tarkov Tools\n\n", "head"),
 
         ("  two modes, and how to swap\n", "head"),
-        ("    Esc             ", "label"), ("SEARCH -> NORMAL  (press again to back out)\n", None),
+        ("    Esc             ", "label"), ("SEARCH -> NORMAL, then back out a level\n", None),
         ("    /               ", "label"), ("NORMAL -> SEARCH, starting a fresh search\n", None),
         ("    i               ", "label"), ("NORMAL -> SEARCH, keeping what is there\n", None),
         ("    SEARCH          ", "label"), ("typing goes in the box\n", None),
@@ -1321,7 +1344,7 @@ class Popover:
         ("    h l             ", "label"), ("previous filter, next filter\n", None),
         ("    g G             ", "label"), ("first, last\n", None),
         ("    Enter           ", "label"), ("open what is highlighted\n", None),
-        ("    Esc  /  Backspace ", "label"), ("back one level, then close\n", None),
+        ("    Esc  /  Backspace ", "label"), ("back one level (never closes)\n", None),
         ("    Tab  /  1-0 y-p ", "label"), ("switch filter (Ctrl+key while typing)\n", None),
 
         ("\n  going deeper (Enter)\n", "head"),
@@ -1361,7 +1384,7 @@ class Popover:
         ("    empty box       ", "label"), ("shows what you searched recently\n", None),
         ("    drag the top    ", "label"), ("move the window anywhere\n", None),
         ("    :help           ", "label"), ("this, any time\n", None),
-        ("    q  /  :q        ", "label"), ("close the window, keep running\n", None),
+        ("    :q              ", "label"), ("close the window, keep running\n", None),
         ("    :q!             ", "label"), ("quit everything, restore gamma\n", None),
     ]
 
@@ -1863,7 +1886,7 @@ class Popover:
         entry = self._current_result() or {}
         if entry.get("kind") == "recent":
             searchmod.forget_search(self.conn, entry["name"])
-            self.status_note = "forgotten"
+            self._flash("forgotten")
             self._on_type()
             return "break"
         item_id = self._selected_item_id()
@@ -1875,7 +1898,7 @@ class Popover:
         searchmod.set_quantity(self.conn, item_id, "have", 0)
         self._refresh_marks()
         self._rebuild_filter_bar()
-        self.status_note = f"removed {name}" if name else "removed from your stash"
+        self._flash(f"removed {name}" if name else "removed from your stash")
         self._redraw_current()
         return "break"
 

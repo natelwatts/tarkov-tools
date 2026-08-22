@@ -446,15 +446,13 @@ class Popover:
         self.mode_label = tk.Label(hintbar, text="", bg=BG_ALT, fg=FG_DIM,
                                    font=(mono, 9, "bold"))
         self.mode_label.pack(side="left")
-        hint = tk.Label(
-            hintbar,
-            text="  j k move   / search   Enter open   h back   Tab filter   Ctrl+Enter wiki   Ctrl+Shift+Enter price   Ctrl+H have   Ctrl+Shift+H count   Ctrl+Del drop   Ctrl+D watch   :help  ",
-            bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
+        self.hint = tk.Label(
+            hintbar, text="", bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
-        hint.pack(fill="x", side="left", expand=True)
-        self._make_draggable(hint)
+        self.hint.pack(fill="x", side="left", expand=True)
+        self._make_draggable(self.hint)
         self._make_draggable(hintbar)
-        self._render_mode()
+        self._update_chrome()
 
         self.root.bind("<Escape>", self._on_escape)
         self.root.bind("<F5>", self._sync)
@@ -601,18 +599,50 @@ class Popover:
             self.entry.configure(insertwidth=2)
         else:
             self.entry.configure(insertwidth=0)   # no caret when not typing
-        self._render_mode()
+        self._update_chrome()
 
     def _render_mode(self) -> None:
         if not self.vim_keys:
             self.mode_label.configure(text="")
             return
+        # The way out of a mode is printed on the mode itself, so it never
+        # has to be remembered - which is the whole job of this label.
         searching = self.mode == "search"
         self.mode_label.configure(
-            text=" SEARCH " if searching else " NORMAL ",
+            text=" SEARCH · Esc to browse " if searching else " NORMAL · / to search ",
             bg="#3a6ea5" if searching else "#4a4f5a",
             fg="#e8eaed",
         )
+
+    # Only ever one line's worth. Listing every shortcut at once overflowed
+    # the window and got clipped, which taught nobody anything; the full set
+    # lives in :help, and this shows the handful that apply right here.
+    HINTS = {
+        ("search", "search"): "Enter open · Tab filter · Ctrl+Enter wiki · Ctrl+H have · :help",
+        ("normal", "search"): "j k move · Enter open · / search · Ctrl+H have · :help",
+        ("search", "slots"): "Enter the parts in a category · Esc back · :help",
+        ("normal", "slots"): "j k move · Enter parts · h back · :help",
+        ("search", "parts"): "Enter what it fits · Ctrl+H have · Esc back · :help",
+        ("normal", "parts"): "j k move · Enter fits · Ctrl+H have · h back · :help",
+        ("search", "fits"): "Enter that gun's parts · Esc back · :help",
+        ("normal", "fits"): "j k move · Enter its parts · h back · :help",
+    }
+
+    def _hint_text(self) -> str:
+        if self.qty_target:
+            return "type a number · Enter save · 0 removes · Esc cancel"
+        if not self.vim_keys:
+            return ("↑↓ move · Enter open · Tab filter · Ctrl+Enter wiki · "
+                    "Ctrl+H have · :help")
+        return self.HINTS.get((self.mode, self.view), self.HINTS[("normal", "search")])
+
+    def _update_chrome(self) -> None:
+        """Keep the mode badge and the hint line matching what is on screen."""
+        self._render_mode()
+        try:
+            self.hint.configure(text="  " + self._hint_text() + "  ")
+        except Exception:
+            pass
 
     def _start_search(self, event=None, keep: bool = False) -> str:
         """Focus the box for typing. '/' starts fresh, 'i' keeps what is there."""
@@ -956,6 +986,7 @@ class Popover:
         you where you were.
         """
         self.view = "slots"
+        self._update_chrome()
         self.part_entries = []
         self.listbox.delete(0, "end")
         for entry in self.slot_entries:
@@ -989,6 +1020,7 @@ class Popover:
     def _show_parts(self, index: int = 0) -> None:
         """Draw the current category's parts, highlighting one."""
         self.view = "parts"
+        self._update_chrome()
         self.listbox.delete(0, "end")
         for part in self.part_entries:
             mark = self._marks(part.get("id") or "")
@@ -1023,6 +1055,7 @@ class Popover:
     def _show_fits(self, index: int = 0) -> None:
         """Draw the weapons the current part fits, highlighting one."""
         self.view = "fits"
+        self._update_chrome()
         self.listbox.delete(0, "end")
         for gun in self.fits_entries:
             mark = self._marks(gun.get("id") or "")
@@ -1271,12 +1304,12 @@ class Popover:
     HELP = [
         ("Tarkov Tools\n\n", "head"),
 
-        ("  two modes\n", "head"),
+        ("  two modes, and how to swap\n", "head"),
+        ("    Esc             ", "label"), ("SEARCH -> NORMAL  (press again to back out)\n", None),
+        ("    /               ", "label"), ("NORMAL -> SEARCH, starting a fresh search\n", None),
+        ("    i               ", "label"), ("NORMAL -> SEARCH, keeping what is there\n", None),
         ("    SEARCH          ", "label"), ("typing goes in the box\n", None),
         ("    NORMAL          ", "label"), ("keys are commands - j k move, no typing\n", None),
-        ("    Esc             ", "label"), ("leave SEARCH for NORMAL, then back out\n", None),
-        ("    /               ", "label"), ("start a fresh search\n", None),
-        ("    i               ", "label"), ("keep typing on what is already there\n", None),
         ("    The mode shows bottom-left. Set search.vim_keys false in\n", "dim"),
         ("    config.json to turn all of this off.\n", "dim"),
 
@@ -1325,7 +1358,69 @@ class Popover:
         ("    empty box       ", "label"), ("shows what you searched recently\n", None),
         ("    drag the top    ", "label"), ("move the window anywhere\n", None),
         ("    :help           ", "label"), ("this, any time\n", None),
+        ("    :q              ", "label"), ("quit - stops the gamma watcher too\n", None),
+        ("    q               ", "label"), ("just hide the window\n", None),
     ]
+
+    QUIT_WORDS = (":q", ":q!", ":quit", ":x", ":wq")
+    HELP_WORDS = (":help", ":h", ":?")
+
+    def _colon_preview(self, term: str) -> bool:
+        """Show what a :command would do. True if the term is one.
+
+        Help renders itself, since showing it costs nothing. Quitting waits
+        for Enter: it stops the gamma watcher too, and a command that ends
+        the session off a single keystroke is not one you want to fat-finger.
+        """
+        word = term.lower()
+        if word in self.HELP_WORDS:
+            self._set_detail(list(self.HELP))
+            return True
+        if word in self.QUIT_WORDS:
+            self._set_detail([
+                ("Quit Tarkov Tools\n\n", "head"),
+                ("  Press Enter to stop the search popover and the gamma\n"
+                 "  watcher, and put your gamma back to normal.\n\n", None),
+                ("  Esc or Backspace to stay.\n", "dim"),
+            ])
+            return True
+        if word.startswith(":") and len(word) > 1:
+            self._set_detail([
+                (f"{term}\n\n", "head"),
+                ("  not a command\n\n", "warn"),
+                ("  :help   the keys\n", "label"),
+                ("  :q      quit\n", "label"),
+            ])
+            return True
+        return False
+
+    def _run_colon(self, term: str) -> bool:
+        """Act on a :command. True if it was one."""
+        word = term.lower()
+        if word in self.QUIT_WORDS:
+            self._quit()
+            return True
+        return word in self.HELP_WORDS or (word.startswith(":") and len(word) > 1)
+
+    def _quit(self) -> None:
+        """Stop the whole thing, not just this window.
+
+        Destroying the root returns from mainloop, which unwinds through the
+        popover's own cleanup and then the caller's - stopping the gamma
+        watcher and restoring gamma on the way out. That is the same path
+        Ctrl-C takes, so there is only one shutdown to get right.
+        """
+        print("quitting - stopping both tools")
+        try:
+            # Deferred: tearing the root down from inside the event handler
+            # that is still running on it can raise from Tk. after(0, ...)
+            # lets this callback return first.
+            self.root.after(0, self.root.destroy)
+        except Exception:
+            try:
+                self.root.destroy()
+            except Exception:
+                pass
 
     def _on_type(self, event=None) -> None:
         if event is not None and event.keysym in ("Up", "Down", "Return", "Escape",
@@ -1345,12 +1440,13 @@ class Popover:
             return
         if event is not None and self.vim_keys and self.mode == "normal":
             return   # the keypress was a command; the term did not change
+        self._update_chrome()
         term = self.entry.get().strip()
-        if term.lower() in (":help", ":h", ":?"):
+        if term.startswith(":"):
             self.results = []
             self.listbox.delete(0, "end")
-            self._set_detail(list(self.HELP))
-            return
+            if self._colon_preview(term):
+                return
         _label, kind, side = self.filters[self.filter_index]
         # An active filter with an empty box lists that whole category, so the
         # filter doubles as a way to browse.
@@ -1565,6 +1661,9 @@ class Popover:
     def _nav_enter(self, event=None):
         if self.qty_target:
             return self._commit_quantity()
+        term = self.entry.get().strip()
+        if term.startswith(":") and self._run_colon(term):
+            return "break"
         if self.view == "slots":
             self._enter_parts(self._current_row())
             return "break"
@@ -1942,7 +2041,8 @@ def main(hotkey: str | None = None) -> int:
         print(f"warning: {exc}\nShowing the window directly instead.")
         popover.show()
 
-    print("Close this window or press Ctrl-C to stop.")
+    # The window is borderless, so there is no close button to mean this.
+    print("Type :q in the popover, or press Ctrl-C here, to stop.")
     try:
         popover.run()
     finally:

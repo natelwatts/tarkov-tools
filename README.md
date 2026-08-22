@@ -289,6 +289,15 @@ The overlay has two modes, shown bottom-left:
   than closing, so you can browse results without the box eating your
   keystrokes.
 
+**Swapping between them:** `Esc` goes SEARCH → NORMAL, `/` goes back the other
+way with a fresh search, `i` goes back keeping what you already typed. The
+badge in the bottom-left names the mode *and* the key out of it, so there is
+nothing to memorise.
+
+The line beside it lists only the keys that apply where you are standing -
+it changes with the mode and with how deep you have browsed. The full set is
+always `:help`.
+
 | key | does |
 |---|---|
 | `j` `k` | next, previous (arrows work too) |
@@ -297,7 +306,8 @@ The overlay has two modes, shown bottom-left:
 | `h` or `Backspace` | back one level |
 | `/` | fresh search |
 | `i` | keep typing on what's there |
-| `q` | hide |
+| `q` | hide the window |
+| `:q` | quit properly - stops the gamma watcher and restores gamma |
 | `1`-`0`, `y`-`p` | jump to a filter (no Ctrl needed in NORMAL) |
 
 Every `Ctrl+` shortcut works identically in both modes - `Ctrl+H`, `Ctrl+Enter`

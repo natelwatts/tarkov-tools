@@ -619,13 +619,13 @@ class Popover:
     # lives in :help, and this shows the handful that apply right here.
     HINTS = {
         ("search", "search"): "Enter open · Tab filter · Ctrl+Enter wiki · Ctrl+H have · :help",
-        ("normal", "search"): "j k move · Enter open · / search · Ctrl+H have · :help",
+        ("normal", "search"): "j k rows · h l filters · Enter open · / search · :help",
         ("search", "slots"): "Enter the parts in a category · Esc back · :help",
-        ("normal", "slots"): "j k move · Enter parts · h back · :help",
+        ("normal", "slots"): "j k rows · Enter parts · Esc back · :help",
         ("search", "parts"): "Enter what it fits · Ctrl+H have · Esc back · :help",
-        ("normal", "parts"): "j k move · Enter fits · Ctrl+H have · h back · :help",
+        ("normal", "parts"): "j k rows · Enter fits · Ctrl+H have · Esc back · :help",
         ("search", "fits"): "Enter that gun's parts · Esc back · :help",
-        ("normal", "fits"): "j k move · Enter its parts · h back · :help",
+        ("normal", "fits"): "j k rows · Enter its parts · Esc back · :help",
     }
 
     def _hint_text(self) -> str:
@@ -653,10 +653,13 @@ class Popover:
         self.entry.focus_set()
         return "break"
 
+    # h/l move sideways the way j/k move down and up. The sideways axis here
+    # is the filter bar, so they cycle filters; backing out of a level is
+    # Escape and Backspace, which already did that job.
     NORMAL_KEYS = {
         "j": "down", "k": "up",
+        "h": "filter-prev", "l": "filter-next",
         "g": "first", "G": "last",
-        "l": "enter", "h": "back",
         "q": "hide",
         "/": "search", "i": "search-keep", "a": "search-keep",
     }
@@ -682,10 +685,10 @@ class Popover:
             self._jump_to(0)
         elif action == "last":
             self._jump_to(10 ** 6)
-        elif action == "enter":
-            self._nav_enter()
-        elif action == "back":
-            self._go_back()
+        elif action == "filter-prev":
+            self._prev_filter()
+        elif action == "filter-next":
+            self._next_filter()
         elif action == "hide":
             self.hide()
         elif action == "search":
@@ -1314,11 +1317,11 @@ class Popover:
         ("    config.json to turn all of this off.\n", "dim"),
 
         ("\n  moving about\n", "head"),
-        ("    j k  /  Up Down ", "label"), ("next, previous\n", None),
+        ("    j k  /  Up Down ", "label"), ("next row, previous row\n", None),
+        ("    h l             ", "label"), ("previous filter, next filter\n", None),
         ("    g G             ", "label"), ("first, last\n", None),
-        ("    Enter  /  l     ", "label"), ("open what is highlighted\n", None),
-        ("    h  /  Backspace ", "label"), ("back one level\n", None),
-        ("    q               ", "label"), ("hide the window\n", None),
+        ("    Enter           ", "label"), ("open what is highlighted\n", None),
+        ("    Esc  /  Backspace ", "label"), ("back one level, then close\n", None),
         ("    Tab  /  1-0 y-p ", "label"), ("switch filter (Ctrl+key while typing)\n", None),
 
         ("\n  going deeper (Enter)\n", "head"),
@@ -1358,11 +1361,14 @@ class Popover:
         ("    empty box       ", "label"), ("shows what you searched recently\n", None),
         ("    drag the top    ", "label"), ("move the window anywhere\n", None),
         ("    :help           ", "label"), ("this, any time\n", None),
-        ("    :q              ", "label"), ("quit - stops the gamma watcher too\n", None),
-        ("    q               ", "label"), ("just hide the window\n", None),
+        ("    q  /  :q        ", "label"), ("close the window, keep running\n", None),
+        ("    :q!             ", "label"), ("quit everything, restore gamma\n", None),
     ]
 
-    QUIT_WORDS = (":q", ":q!", ":quit", ":x", ":wq")
+    # :q puts the window away, the same as tapping q. Ending the whole
+    # session - which stops the gamma watcher too - takes the emphatic form.
+    CLOSE_WORDS = (":q", ":quit", ":x", ":close")
+    QUIT_WORDS = (":q!", ":quit!", ":qa", ":qa!", ":wq")
     HELP_WORDS = (":help", ":h", ":?")
 
     def _colon_preview(self, term: str) -> bool:
@@ -1376,12 +1382,21 @@ class Popover:
         if word in self.HELP_WORDS:
             self._set_detail(list(self.HELP))
             return True
+        if word in self.CLOSE_WORDS:
+            self._set_detail([
+                ("Close the window\n\n", "head"),
+                ("  Press Enter to hide the popover. Everything keeps\n"
+                 "  running - your hotkey brings it straight back.\n\n", None),
+                ("  :q! quits properly instead.\n", "dim"),
+            ])
+            return True
         if word in self.QUIT_WORDS:
             self._set_detail([
                 ("Quit Tarkov Tools\n\n", "head"),
                 ("  Press Enter to stop the search popover and the gamma\n"
-                 "  watcher, and put your gamma back to normal.\n\n", None),
-                ("  Esc or Backspace to stay.\n", "dim"),
+                 "  watcher, and put your gamma back to normal.\n\n", "warn"),
+                ("  This ends the session - the hotkey will not bring it\n"
+                 "  back. Esc or Backspace to stay.\n", "dim"),
             ])
             return True
         if word.startswith(":") and len(word) > 1:
@@ -1389,7 +1404,8 @@ class Popover:
                 (f"{term}\n\n", "head"),
                 ("  not a command\n\n", "warn"),
                 ("  :help   the keys\n", "label"),
-                ("  :q      quit\n", "label"),
+                ("  :q      close the window\n", "label"),
+                ("  :q!     quit everything\n", "label"),
             ])
             return True
         return False
@@ -1397,6 +1413,11 @@ class Popover:
     def _run_colon(self, term: str) -> bool:
         """Act on a :command. True if it was one."""
         word = term.lower()
+        if word in self.CLOSE_WORDS:
+            self.entry.delete(0, "end")
+            self._on_type()
+            self.hide()
+            return True
         if word in self.QUIT_WORDS:
             self._quit()
             return True
@@ -1482,11 +1503,17 @@ class Popover:
                               ("or :help for the keys\n", "dim")])
 
     def _on_escape(self, event=None) -> str:
-        """Escape leaves typing first, then backs out a level, then hides."""
+        """Escape leaves typing first, then backs out a level, then hides.
+
+        The first press always drops SEARCH into NORMAL, even with nothing on
+        screen. Making it conditional on having results meant that at the top
+        level - the one place you are most likely to be - Escape skipped the
+        mode change and closed the window, so there was no way to reach NORMAL
+        from a fresh box.
+        """
         if self.qty_target:
             return self._cancel_quantity()
-        if self.vim_keys and self.mode == "search" and self.listbox.size():
-            # Something to browse: drop into normal mode rather than leaving.
+        if self.vim_keys and self.mode == "search":
             self._set_mode("normal")
             return "break"
         return self._go_back()

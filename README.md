@@ -300,15 +300,20 @@ always `:help`.
 
 | key | does |
 |---|---|
-| `j` `k` | next, previous (arrows work too) |
+| `j` `k` | next row, previous row |
+| `h` `l` | previous filter, next filter |
 | `g` `G` | first, last |
-| `Enter` or `l` | open what's highlighted |
-| `h` or `Backspace` | back one level |
+| `Enter` | open what's highlighted |
+| `Esc` / `Backspace` | back a level, then close |
 | `/` | fresh search |
 | `i` | keep typing on what's there |
-| `q` | hide the window |
-| `:q` | quit properly - stops the gamma watcher and restores gamma |
+| `q` / `:q` | close the window, everything keeps running |
+| `:q!` | quit properly - stops the gamma watcher and restores gamma |
 | `1`-`0`, `y`-`p` | jump to a filter (no Ctrl needed in NORMAL) |
+
+`h`/`l` move sideways the way `j`/`k` move up and down - and sideways here is
+the filter bar. Backing out of a level is `Esc` or `Backspace`, which already
+did that job.
 
 Every `Ctrl+` shortcut works identically in both modes - `Ctrl+H`, `Ctrl+Enter`
 and the rest never get intercepted.

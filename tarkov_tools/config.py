@@ -66,6 +66,9 @@ DEFAULTS: dict[str, Any] = {
     "search": {
         "hotkey": "ctrl+t",
         "max_results": 40,
+        # Vim-style keys: j/k move, / searches, h backs out, q hides.
+        # Set false to have every key type into the search box as before.
+        "vim_keys": True,
         # [x, y] of the popover, updated when you drag it. null = centred.
         "position": None,
         # Filter chip order, by label. Empty means the built-in order.

@@ -70,6 +70,7 @@ KIND_TAGS = {
     "knife": "BLDE", "map": "MAP", "money": "CASH", "special": "SPEC",
     "info": "INFO", "item": "ITEM",
     "extract": "EXT", "needed": "NEED", "have": "HAVE", "watch": "WCH",
+    "recent": "↻",
 }
 # Only offered once a TarkovTracker account has been synced. The integration
 # is optional, and an empty filter is worse than no filter.
@@ -290,6 +291,10 @@ class Popover:
         self.qty_target: str | None = None
         self.qty_name = ""
         self.qty_prev_term = ""
+        # 'search' types into the box, 'normal' treats keys as commands.
+        # It opens in search mode so the hotkey is still followed by typing.
+        self.mode = "search"
+        self.vim_keys = bool(load_config()["search"].get("vim_keys", True))
         self.status_note = ''
         self._refresh_marks()
         self._build()
@@ -360,7 +365,9 @@ class Popover:
             relief="flat", highlightthickness=0,
         )
         self.entry.pack(side="left", fill="x", expand=True, ipady=8, padx=(0, 10))
+        self.entry.bind("<KeyPress>", self._on_keypress)
         self.entry.bind("<KeyRelease>", self._on_type)
+        self.entry.bind("<slash>", self._start_search)
         self.entry.bind("<Down>", self._nav_down)
         self.entry.bind("<Up>", self._nav_up)
         self.entry.bind("<Return>", self._nav_enter)
@@ -432,13 +439,22 @@ class Popover:
         for threshold, colour in PEN_BANDS:
             self.detail.tag_configure(f"pen{threshold}", foreground=colour)
 
+        hintbar = tk.Frame(inner, bg=BG_ALT)
+        hintbar.pack(fill="x", side="bottom")
+        # Which mode you are in has to be visible: the same keypress either
+        # types a letter or jumps a row, and guessing which is unpleasant.
+        self.mode_label = tk.Label(hintbar, text="", bg=BG_ALT, fg=FG_DIM,
+                                   font=(mono, 9, "bold"))
+        self.mode_label.pack(side="left")
         hint = tk.Label(
-            inner,
-            text="  ←→ / Tab / Ctrl+1-0,y-p filter   ↑↓ move   Enter parts / map   Ctrl+Enter wiki   Ctrl+Shift+Enter price   Ctrl+Shift+←→ reorder   Ctrl+H have   Ctrl+Shift+H count   Ctrl+Del drop   Ctrl+D watch   F5 sync   Esc back  ",
+            hintbar,
+            text="  j k move   / search   Enter open   h back   Tab filter   Ctrl+Enter wiki   Ctrl+Shift+Enter price   Ctrl+H have   Ctrl+Shift+H count   Ctrl+Del drop   Ctrl+D watch   :help  ",
             bg=BG_ALT, fg=FG_DIM, font=(mono, 9), anchor="w",
         )
-        hint.pack(fill="x", side="bottom")
+        hint.pack(fill="x", side="left", expand=True)
         self._make_draggable(hint)
+        self._make_draggable(hintbar)
+        self._render_mode()
 
         self.root.bind("<Escape>", self._on_escape)
         self.root.bind("<F5>", self._sync)
@@ -538,6 +554,7 @@ class Popover:
         # focuses (and that the gamma watcher identifies by title) is its
         # GA_ROOT ancestor.
         _force_foreground(toplevel_of(self.root.winfo_id()))
+        self._set_mode("search")
         self.entry.focus_force()
         self.entry.select_range(0, "end")
 
@@ -566,6 +583,110 @@ class Popover:
                     self._render(subject["id"])
         except Exception:
             pass
+
+    # --- modes ---------------------------------------------------------
+
+    def _set_mode(self, mode: str) -> None:
+        """Switch between typing and commanding.
+
+        Focus never moves: the entry keeps it in both modes and normal-mode
+        keys are swallowed before they reach it. Moving focus to the list
+        instead would mean Tk deciding which widget owns Tab, Escape and the
+        arrow keys, which is exactly the argument this avoids.
+        """
+        if mode == self.mode:
+            return
+        self.mode = mode
+        if mode == "search":
+            self.entry.configure(insertwidth=2)
+        else:
+            self.entry.configure(insertwidth=0)   # no caret when not typing
+        self._render_mode()
+
+    def _render_mode(self) -> None:
+        if not self.vim_keys:
+            self.mode_label.configure(text="")
+            return
+        searching = self.mode == "search"
+        self.mode_label.configure(
+            text=" SEARCH " if searching else " NORMAL ",
+            bg="#3a6ea5" if searching else "#4a4f5a",
+            fg="#e8eaed",
+        )
+
+    def _start_search(self, event=None, keep: bool = False) -> str:
+        """Focus the box for typing. '/' starts fresh, 'i' keeps what is there."""
+        self._set_mode("search")
+        if not keep:
+            self.entry.delete(0, "end")
+            self._on_type()
+        self.entry.focus_set()
+        return "break"
+
+    NORMAL_KEYS = {
+        "j": "down", "k": "up",
+        "g": "first", "G": "last",
+        "l": "enter", "h": "back",
+        "q": "hide",
+        "/": "search", "i": "search-keep", "a": "search-keep",
+    }
+
+    def _on_keypress(self, event=None):
+        """In normal mode a bare key is a command, not a character.
+
+        Returning "break" stops it reaching the entry, so the search box never
+        fills up with navigation keys. Anything with a modifier is left alone -
+        Ctrl+H and friends work identically in both modes.
+        """
+        if not self.vim_keys or self.mode != "normal" or self.qty_target:
+            return None
+        if event.state & 0x0004:          # Ctrl held: not ours to interpret
+            return None
+
+        action = self.NORMAL_KEYS.get(event.char)
+        if action == "down":
+            self._move(1)
+        elif action == "up":
+            self._move(-1)
+        elif action == "first":
+            self._jump_to(0)
+        elif action == "last":
+            self._jump_to(10 ** 6)
+        elif action == "enter":
+            self._nav_enter()
+        elif action == "back":
+            self._go_back()
+        elif action == "hide":
+            self.hide()
+        elif action == "search":
+            self._start_search()
+        elif action == "search-keep":
+            self._start_search(keep=True)
+        elif event.char.isdigit():
+            # Bare digits jump filters, the way Ctrl+digit does while typing.
+            index = FILTER_KEYS.find(event.char)
+            if index >= 0:
+                self._jump_filter(index)
+        else:
+            return "break"   # swallow anything else rather than typing it
+        return "break"
+
+    def _jump_to(self, index: int) -> None:
+        rows = {
+            "slots": self.slot_entries,
+            "parts": self.part_entries,
+            "fits": self.fits_entries,
+        }.get(self.view, self.results)
+        if not rows:
+            return
+        index = max(0, min(len(rows) - 1, index))
+        self.listbox.selection_clear(0, "end")
+        self.listbox.selection_set(index)
+        self.listbox.see(index)
+        if self.view == "slots":
+            self._render_slot(index)
+        else:
+            self._render(rows[index]["id"])
 
     def _pump(self) -> None:
         try:
@@ -1149,39 +1270,61 @@ class Popover:
 
     HELP = [
         ("Tarkov Tools\n\n", "head"),
-        ("  finding things\n", "head"),
-        ("    type            ", "label"), ("search guns, ammo, mags, parts, items, extracts\n", None),
-        ("    Tab  /  Left Right ", "label"), ("cycle the type filter\n", None),
-        ("    Ctrl+1..0, y u i o p ", "label"), ("jump straight to a filter\n", None),
-        ("    Ctrl+Shift+Left Right ", "label"), ("reorder the filters\n", None),
-        ("    Up Down         ", "label"), ("move through results\n", None),
+
+        ("  two modes\n", "head"),
+        ("    SEARCH          ", "label"), ("typing goes in the box\n", None),
+        ("    NORMAL          ", "label"), ("keys are commands - j k move, no typing\n", None),
+        ("    Esc             ", "label"), ("leave SEARCH for NORMAL, then back out\n", None),
+        ("    /               ", "label"), ("start a fresh search\n", None),
+        ("    i               ", "label"), ("keep typing on what is already there\n", None),
+        ("    The mode shows bottom-left. Set search.vim_keys false in\n", "dim"),
+        ("    config.json to turn all of this off.\n", "dim"),
+
+        ("\n  moving about\n", "head"),
+        ("    j k  /  Up Down ", "label"), ("next, previous\n", None),
+        ("    g G             ", "label"), ("first, last\n", None),
+        ("    Enter  /  l     ", "label"), ("open what is highlighted\n", None),
+        ("    h  /  Backspace ", "label"), ("back one level\n", None),
+        ("    q               ", "label"), ("hide the window\n", None),
+        ("    Tab  /  1-0 y-p ", "label"), ("switch filter (Ctrl+key while typing)\n", None),
+
         ("\n  going deeper (Enter)\n", "head"),
         ("    on a gun        ", "label"), ("its attachment categories\n", None),
         ("    on a category   ", "label"), ("the parts that fit, best ergo first\n", None),
         ("    on a part       ", "label"), ("every weapon it goes on\n", None),
-        ("    on a weapon there ", "label"), ("that gun's categories - it loops\n", None),
         ("    on an extract   ", "label"), ("the wiki map, zoomed out, exit marked\n", None),
+
         ("\n  opening things\n", "head"),
         ("    Ctrl+Enter      ", "label"), ("the wiki page\n", None),
         ("    Ctrl+Shift+Enter ", "label"), ("the flea market price page\n", None),
-        ("\n  keeping track\n", "head"),
-        ("    Ctrl+H          ", "label"), ("mark as in your stash\n", None),
+
+        ("\n  your inventory\n", "head"),
+        ("    Ctrl+H          ", "label"), ("mark one as in your stash\n", None),
         ("    Ctrl+Shift+H    ", "label"), ("type how many you have\n", None),
         ("    Ctrl+Up Down    ", "label"), ("add or remove one\n", None),
         ("    Ctrl+Del        ", "label"), ("take it out of your stash\n", None),
-        ("    Have filter     ", "label"), ("everything you hold, by value\n", None),
-        ("    Ctrl+D          ", "label"), ("mark as worth looking out for\n", None),
+        ("    to see it all   ", "label"), ("Tab to the Have filter, or Ctrl+its number\n", None),
+        ("    The Have chip appears in the filter bar once you hold\n", "dim"),
+        ("    something, listed by what each pile is worth, with a total.\n", "dim"),
+        ("    In a terminal: uv run tarkov-tools stash\n", "dim"),
+
+        ("\n  things to look out for\n", "head"),
+        ("    Ctrl+D          ", "label"), ("mark as worth watching for\n", None),
+        ("    to see it all   ", "label"), ("Tab to the Watch filter\n", None),
+        ("    Watched items carry a diamond everywhere they appear,\n", "dim"),
+        ("    including inside a gun's parts list.\n", "dim"),
+
+        ("\n  keeping current\n", "head"),
         ("    F5              ", "label"), ("refresh prices, and TarkovTracker if connected\n", None),
-        ("\n  getting out\n", "head"),
-        ("    Esc             ", "label"), ("back one level, then hide\n", None),
-        ("    Backspace       ", "label"), ("same, when the box is empty\n", None),
-        ("    drag the top    ", "label"), ("move the window anywhere\n", None),
-        ("\n  prices\n", "head"),
         ("    Flea prices refresh on their own, hourly at source.\n", "dim"),
         ("    'not on the flea market' means banned, not missing.\n", "dim"),
         ("    Value per slot is left off weapons - a built gun's size\n", "dim"),
         ("    depends on its attachments.\n", "dim"),
-        ("\n  type :help any time to see this again\n", "dim"),
+
+        ("\n  odds and ends\n", "head"),
+        ("    empty box       ", "label"), ("shows what you searched recently\n", None),
+        ("    drag the top    ", "label"), ("move the window anywhere\n", None),
+        ("    :help           ", "label"), ("this, any time\n", None),
     ]
 
     def _on_type(self, event=None) -> None:
@@ -1200,6 +1343,8 @@ class Popover:
             # The box is collecting a count, not a search term.
             self._render_quantity_prompt()
             return
+        if event is not None and self.vim_keys and self.mode == "normal":
+            return   # the keypress was a command; the term did not change
         term = self.entry.get().strip()
         if term.lower() in (":help", ":h", ":?"):
             self.results = []
@@ -1214,7 +1359,9 @@ class Popover:
                 self.conn, term, self.max_results, kind=kind, side=side
             )
         else:
-            self.results = []
+            # Nothing typed and no filter: offer what you looked up before,
+            # which beats an empty pane you have to type your way out of.
+            self.results = searchmod.recent_searches(self.conn)
         self.listbox.delete(0, "end")
         for r in self.results:
             tag = KIND_TAGS.get(r["kind"], "ITEM")
@@ -1239,9 +1386,13 @@ class Popover:
                               ("or :help for the keys\n", "dim")])
 
     def _on_escape(self, event=None) -> str:
-        """Escape backs out one level at a time, and only then hides."""
+        """Escape leaves typing first, then backs out a level, then hides."""
         if self.qty_target:
             return self._cancel_quantity()
+        if self.vim_keys and self.mode == "search" and self.listbox.size():
+            # Something to browse: drop into normal mode rather than leaving.
+            self._set_mode("normal")
+            return "break"
         return self._go_back()
 
     def _on_backspace(self, event=None):
@@ -1348,6 +1499,7 @@ class Popover:
         name = (self._market_name() or "").replace("[DEMO] ", "").strip()
         if not name:
             return "break"
+        searchmod.record_search(self.conn, self.entry.get().strip())
         try:
             url, exact = market_mod.url_for(self.conn, name)
         except Exception as exc:
@@ -1400,6 +1552,7 @@ class Popover:
         name = wikimod.clean_name(self._wiki_name() or "")
         if not name:
             return "break"
+        searchmod.record_search(self.conn, self.entry.get().strip())
         self.hide()
         self.root.update_idletasks()
         try:
@@ -1425,6 +1578,13 @@ class Popover:
             return "break"
         chosen = self._current_result()
         if chosen:
+            if chosen.get("kind") == "recent":
+                self.entry.delete(0, "end")
+                self.entry.insert(0, chosen["name"])
+                self._set_mode("search")
+                self._on_type()
+                return "break"
+            searchmod.record_search(self.conn, self.entry.get().strip())
             if chosen.get("kind") == "extract":
                 self._open_extract(chosen["id"])
             elif chosen.get("kind") == "weapon":
@@ -1469,6 +1629,15 @@ class Popover:
         self.detail.configure(state="disabled")
 
     def _render(self, item_id: str) -> None:
+        if isinstance(item_id, str) and item_id.startswith("recent:"):
+            term = item_id.split(":", 1)[1]
+            self._set_detail([
+                (f"{term}\n\n", "head"),
+                ("  a search you ran before\n\n", "dim"),
+                ("  Enter searches for it again\n", "label"),
+                ("  Ctrl+Del forgets it\n", "dim"),
+            ])
+            return
         data = searchmod.describe(self.conn, item_id)
         if not data:
             self._set_detail([("not found\n", "dim")])
@@ -1565,6 +1734,12 @@ class Popover:
 
     def _remove_from_stash(self, event=None) -> str:
         """Drop the highlighted item off the have list outright."""
+        entry = self._current_result() or {}
+        if entry.get("kind") == "recent":
+            searchmod.forget_search(self.conn, entry["name"])
+            self.status_note = "forgotten"
+            self._on_type()
+            return "break"
         item_id = self._selected_item_id()
         if not item_id or item_id not in self.have:
             return "break"

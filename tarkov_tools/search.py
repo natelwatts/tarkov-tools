@@ -383,6 +383,54 @@ def stash_contents(conn: sqlite3.Connection, list_name: str = "have",
     return [dict(r) for r in rows]
 
 
+def record_search(conn: sqlite3.Connection, term: str) -> None:
+    """Remember a term that was actually used.
+
+    Recorded when a result is opened rather than on every keystroke -
+    otherwise the list fills with "l", "le", "led" on the way to "ledx".
+    """
+    term = (term or "").strip()
+    if len(term) < 2:
+        return
+    try:
+        conn.execute(
+            """
+            INSERT INTO recent_searches (term, uses, last_used)
+            VALUES (?, 1, datetime('now'))
+            ON CONFLICT(term) DO UPDATE SET
+                uses = uses + 1, last_used = datetime('now')
+            """,
+            (term,),
+        )
+        conn.commit()
+    except sqlite3.Error:
+        pass
+
+
+def recent_searches(conn: sqlite3.Connection, limit: int = 12) -> list[dict[str, Any]]:
+    """Terms used lately, most recent first."""
+    try:
+        rows = conn.execute(
+            "SELECT term, uses FROM recent_searches ORDER BY last_used DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    return [
+        {"id": f"recent:{r['term']}", "name": r["term"], "short_name": None,
+         "avg_24h_price": None, "kind": "recent", "uses": r["uses"]}
+        for r in rows
+    ]
+
+
+def forget_search(conn: sqlite3.Connection, term: str) -> None:
+    try:
+        conn.execute("DELETE FROM recent_searches WHERE term = ?", (term,))
+        conn.commit()
+    except sqlite3.Error:
+        pass
+
+
 def listed(conn: sqlite3.Connection, list_name: str) -> set[str]:
     """Item ids on a list, as a set for cheap membership tests while drawing."""
     try:

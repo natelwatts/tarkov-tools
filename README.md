@@ -279,6 +279,40 @@ searches again.
 - Search a **part** → its ergo/recoil/accuracy/loudness and every weapon it
   fits on, however many levels up that is.
 
+### Vim keys
+
+The overlay has two modes, shown bottom-left:
+
+- **SEARCH** - typing goes in the box, as it always has. This is where you
+  land when the hotkey opens it.
+- **NORMAL** - keys are commands. `Esc` from SEARCH drops you here rather
+  than closing, so you can browse results without the box eating your
+  keystrokes.
+
+| key | does |
+|---|---|
+| `j` `k` | next, previous (arrows work too) |
+| `g` `G` | first, last |
+| `Enter` or `l` | open what's highlighted |
+| `h` or `Backspace` | back one level |
+| `/` | fresh search |
+| `i` | keep typing on what's there |
+| `q` | hide |
+| `1`-`0`, `y`-`p` | jump to a filter (no Ctrl needed in NORMAL) |
+
+Every `Ctrl+` shortcut works identically in both modes - `Ctrl+H`, `Ctrl+Enter`
+and the rest never get intercepted.
+
+Not for you? `"vim_keys": false` under `search` in `config.json` and every key
+types into the box exactly as before.
+
+### Recent searches
+
+Leave the box empty on the **All** filter and it lists what you looked up
+recently - `Enter` runs one again, `Ctrl+Del` forgets it. Terms are recorded
+when you actually *open* a result, not on every keystroke, so the list holds
+`ledx` rather than `l`, `le`, `led`, `ledx`.
+
 ### Your own lists
 
 **Ctrl+H** marks something as in your stash, **Ctrl+D** as worth looking out

@@ -181,6 +181,12 @@ CREATE TABLE IF NOT EXISTS market_pages (
     section TEXT
 );
 
+CREATE TABLE IF NOT EXISTS recent_searches (
+    term      TEXT PRIMARY KEY,
+    uses      INTEGER NOT NULL DEFAULT 1,
+    last_used TEXT
+);
+
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
@@ -241,6 +247,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
             slug    TEXT PRIMARY KEY,
             url     TEXT NOT NULL,
             section TEXT
+        );
+        CREATE TABLE IF NOT EXISTS recent_searches (
+            term      TEXT PRIMARY KEY,
+            uses      INTEGER NOT NULL DEFAULT 1,
+            last_used TEXT
         );
     """)
     conn.commit()
